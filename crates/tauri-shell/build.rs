@@ -74,6 +74,9 @@ fn read_required_env() -> (String, String) {
     }
     let host = host.trim_end_matches('/').to_string();
 
+    // Güncelleme beslemesi: varsayılan broker `/v1/feed`; `TAURI_FEED_URL`
+    // verilirse (örn. GitHub latest.json) o kullanılır.
+
     let pubkey = env_var("TAURI_UPDATER_PUBKEY").unwrap_or_default();
     if pubkey.is_empty() {
         panic!(
@@ -94,13 +97,16 @@ fn read_required_env() -> (String, String) {
 /// Doğrulanmış env değerlerini `tauri.conf.json`'a yazar (değişmediyse dokunmaz).
 #[cfg(feature = "tauri")]
 fn render_tauri_conf(host: &str, pubkey: &str) {
+    let feed = match env_var("TAURI_FEED_URL").map(|v| v.trim().to_string()) {
+        Some(f) if !f.is_empty() && !looks_like_placeholder(&f) => f,
+        _ => format!("{host}/v1/feed"),
+    };
     let path = manifest_path("tauri.conf.json");
     let raw = std::fs::read_to_string(&path).expect("tauri.conf.json okunamadi");
     let mut conf: serde_json::Value =
         serde_json::from_str(&raw).expect("tauri.conf.json JSON degil");
     let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION yok");
     conf["version"] = serde_json::Value::String(version);
-    let feed = format!("{host}/v1/feed");
     conf["plugins"]["updater"]["endpoints"] = serde_json::json!([feed]);
     conf["plugins"]["updater"]["pubkey"] = serde_json::Value::String(pubkey.to_string());
     let rendered = serde_json::to_string_pretty(&conf).expect("tauri.conf.json serilestirilemedi") + "\n";
@@ -115,6 +121,7 @@ fn main() {
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-env-changed=TAURI_BROKER_HOST");
     println!("cargo:rerun-if-env-changed=TAURI_UPDATER_PUBKEY");
+    println!("cargo:rerun-if-env-changed=TAURI_FEED_URL");
 
     #[cfg(feature = "tauri")]
     {
