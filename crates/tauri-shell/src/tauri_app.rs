@@ -245,10 +245,15 @@ fn boot_from_broker(app: &AppHandle) {
         let url = version::endpoint_url(BROKER_BASE);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let body = ureq::get(&url)
+            // KRITIK: dogrudan `ureq::get` DEGIL `net::agent` kullanilir.
+            // `net::agent` OS sertifika deposuna guvenir (platform-verifier);
+            // dogrudan cagri ozel CA / IP sertifikasinda basarisiz olup her
+            // acilista "Surum denetlenemedi" toast'i birakir (goruntudeki hata).
+            let body = crate::net::agent()
+                .get(&url)
                 .call()
                 .ok()
-                .and_then(|mut res| res.body_mut().read_to_string().ok());
+                .and_then(|res| res.into_body().read_to_string().ok());
             let _ = tx.send(body);
         });
         let body = rx.recv_timeout(BOOT_TIMEOUT).ok().flatten();
