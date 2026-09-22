@@ -56,7 +56,12 @@ pub fn quote_kurus(billable_secs: u32, line: Line, tariff: &Tariff) -> u64 {
         Line::Home => tariff.home_kurus_per_min,
         Line::Fallback => tariff.fallback_kurus_per_min,
     };
-    ((billable_secs as u64) * per_min + 59) / 60
+    // Doyumlu aritmetik: devasa tarife girdisinde taşma paniği/sarması
+    // yerine u64::MAX'a doyar; bloke o zaman bakiyeye takılır (402, ücretsiz ret).
+    (billable_secs as u64)
+        .saturating_mul(per_min)
+        .saturating_add(59)
+        / 60
 }
 
 /// Minimum ön-kontrol tutarı (1 quantum): bakiye bunun altındaysa
@@ -520,5 +525,27 @@ mod tests {
         assert_eq!(b2, 100); // fallback 10sn quantum × 10kr/sn
         l.settle(30, "ali", "req-1", b2).unwrap();
         assert_eq!(l.balance("ali"), 10_000 - 100); // tek ücret
+    }
+
+    #[test]
+    fn devasa_tarife_tasmaz_doyar_bloke_402_doner() {
+        // Admin yanlışlıkla devasa tarife girerse (u64::MAX): eski kodda
+        // `180 * per_min` u64 taşması debug'da panik, release'de sarmaydı.
+        let huge = Tariff {
+            version: 7,
+            home_kurus_per_min: u64::MAX,
+            fallback_kurus_per_min: u64::MAX,
+            upstream_min_secs: 10,
+        };
+        assert_eq!(quote_kurus(180, Line::Home, &huge), u64::MAX / 60);
+        let mut l = funded();
+        let n_before = l.entries().len();
+        // Tutar bakiyeyi aşar: ücretsiz ret, panik yok, satır yazılmaz.
+        assert!(matches!(
+            l.block(10, "ali", "req-huge", 5.0, Line::Home, &huge),
+            Err(LedgerError::InsufficientBalance { .. })
+        ));
+        assert_eq!(l.entries().len(), n_before);
+        assert_eq!(l.balance("ali"), 10_000);
     }
 }

@@ -415,7 +415,9 @@ impl BrokerState {
         if claimed.as_str().to_lowercase() != actual_hex {
             return Err(ApiError::new(400, "invalid_audio_hash", "ses hash govdeyle uyusmuyor"));
         }
-        let ahash = AudioHash::new(&actual_hex).expect("uretilen hash gecerlidir");
+        let ahash = AudioHash::new(&actual_hex).map_err(|_| {
+            ApiError::new(500, "internal", "ic hash uretilemedi")
+        })?;
         let key = IdempotencyKey::new(acc_id, req, ahash);
 
         // 1) Idempotency: başarı 24sa önbellekte → ücretsiz dönüş.

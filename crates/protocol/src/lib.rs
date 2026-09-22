@@ -60,16 +60,20 @@ pub fn billable_seconds(measured_secs: f64, line: Line, tariff: &Tariff) -> u32 
         Line::Home => QUANTUM_HOME_SECS,
         Line::Fallback => QUANTUM_HOME_SECS.max(tariff.upstream_min_secs),
     };
-    measured.max(quantum)
+    measured.max(quantum).min(MAX_SECONDS)
 }
 
 /// Faturalı saniyeden kuruş tutar: dakikaya yukarı yuvarlanır.
+/// Doyumlu aritmetik (taşmada paniğe/sarmaya karşı u64::MAX'a doyar).
 pub fn quote_kurus(billable_secs: u32, line: Line, tariff: &Tariff) -> u64 {
     let per_min = match line {
         Line::Home => tariff.home_kurus_per_min,
         Line::Fallback => tariff.fallback_kurus_per_min,
     };
-    ((billable_secs as u64) * per_min + 59) / 60
+    (billable_secs as u64)
+        .saturating_mul(per_min)
+        .saturating_add(59)
+        / 60
 }
 
 /// Bir quantumluk (minimum) ön-kontrol tutarı: bakiye < bu ise
@@ -455,5 +459,27 @@ mod tests {
                 PipelineStage::Queue,
             ]
         );
+    }
+
+    #[test]
+    fn tavan_180sn_ustu_faturalanmaz() {
+        let t = tariff();
+        // Kilitli tavan: 180sn üstü ölçü gelse bile faturalı süre 180'de kalır.
+        assert_eq!(billable_seconds(200.0, Line::Home, &t), 180);
+        assert_eq!(billable_seconds(200.0, Line::Fallback, &t), 180);
+        assert_eq!(billable_seconds(180.0, Line::Home, &t), 180);
+    }
+
+    #[test]
+    fn devasa_tarife_tasmaz_doyar() {
+        let huge = Tariff {
+            version: 7,
+            home_kurus_per_min: u64::MAX,
+            fallback_kurus_per_min: u64::MAX,
+            upstream_min_secs: 10,
+        };
+        // Taşma paniği/sarması yerine doyum.
+        assert_eq!(quote_kurus(180, Line::Home, &huge), u64::MAX / 60);
+        assert_eq!(quote_kurus(3, Line::Home, &huge), u64::MAX / 60);
     }
 }

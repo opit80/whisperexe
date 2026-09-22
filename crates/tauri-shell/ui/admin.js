@@ -13,7 +13,7 @@ function say(text, kind) {
   msgEl.className = "msg" + (kind ? " " + kind : "");
 }
 function fmtErr(e) {
-  return "Hata: " + (typeof e === "string" ? e : "baglanti-hatasi");
+  return "Hata: " + (typeof e === "string" ? e : "bağlantı-hatası");
 }
 function tl(k) {
   return (k / 100).toFixed(2) + " TL";
@@ -40,7 +40,7 @@ $("gateform").addEventListener("submit", async (ev) => {
     $("app").hidden = false;
     $("logoutbtn").hidden = false;
     $("adot").className = "dot ok";
-    $("asub").textContent = "acik";
+    $("asub").textContent = "açık";
     loadUsers();
   } catch (e) {
     $("gatemsg").textContent = fmtErr(e);
@@ -71,7 +71,7 @@ async function loadUsers() {
       const td = document.createElement("td");
       td.colSpan = 6;
       td.className = "muted";
-      td.textContent = "hesap yok — Davet sekmesinden ac.";
+      td.textContent = "hesap yok — Davet sekmesinden aç.";
       tr.appendChild(td);
       tb.appendChild(tr);
       return;
@@ -96,17 +96,17 @@ async function loadUsers() {
         badge.textContent = "durduruldu";
       } else if (r.low_balance) {
         badge.className = "badge warn";
-        badge.textContent = "dusuk";
+        badge.textContent = "düşük";
       } else {
         badge.className = "badge ok";
-        badge.textContent = "acik";
+        badge.textContent = "açık";
       }
       cState.appendChild(badge);
       const cAct = document.createElement("td");
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "ghost";
-      btn.textContent = "Ac";
+      btn.textContent = "Aç";
       btn.addEventListener("click", () => openDetail(r.username));
       cAct.appendChild(btn);
       tr.append(cUser, cBal, cHome, cFb, cState, cAct);
@@ -141,7 +141,7 @@ $("topupform").addEventListener("submit", async (ev) => {
   try {
     const v = await invoke("admin_topup", {
       username: detailUser,
-      amountKrs: parseInt($("tp-amt").value, 10),
+      amount_krs: parseInt($("tp-amt").value, 10),
     });
     $("tp-amt").value = "";
     say(detailUser + " yeni bakiye " + tl(v.balance_krs) + ".", "ok");
@@ -159,12 +159,12 @@ $("capform").addEventListener("submit", async (ev) => {
     const raw = $("cp-cap").value.trim();
     await invoke("admin_limits", {
       username: detailUser,
-      dailyHome: null, dailyFb: null, monthlyHome: null, monthlyFb: null,
-      fbCap: raw === "" ? null : parseInt(raw, 10),
-      homeOnly: null,
+      daily_home: null, daily_fb: null, monthly_home: null, monthly_fb: null,
+      fb_cap: raw === "" ? null : parseInt(raw, 10),
+      home_only: null,
     });
     $("cp-cap").value = "";
-    say("Tavan yazildi.", "ok");
+    say("Tavan yazıldı.", "ok");
   } catch (e) {
     say(fmtErr(e), "err");
   }
@@ -174,8 +174,8 @@ $("homeonlybtn").addEventListener("click", async () => {
   if (!detailUser) return;
   try {
     const cur = await invoke("admin_user", { username: detailUser });
-    await invoke("admin_home_only", { username: detailUser, homeOnly: !cur.home_only });
-    say("Sadece-ev " + (!cur.home_only ? "acildi." : "kapatildi."), "ok");
+    await invoke("admin_home_only", { username: detailUser, home_only: !cur.home_only });
+    say("Sadece-ev " + (!cur.home_only ? "açıldı." : "kapatıldı."), "ok");
     openDetail(detailUser);
   } catch (e) {
     say(fmtErr(e), "err");
@@ -186,7 +186,7 @@ $("hwidbtn").addEventListener("click", async () => {
   if (!detailUser) return;
   try {
     await invoke("admin_hwid_reset", { username: detailUser });
-    say("Cihaz slotlari temizlendi.", "ok");
+    say("Cihaz slotları temizlendi.", "ok");
   } catch (e) {
     say(fmtErr(e), "err");
   }
@@ -198,7 +198,7 @@ $("suspendbtn").addEventListener("click", async () => {
     const cur = await invoke("admin_user", { username: detailUser });
     const stop = !cur.suspended;
     await invoke("admin_suspend", { username: detailUser, stop });
-    say(stop ? "Hesap durduruldu." : "Hesap acildi.", "ok");
+    say(stop ? "Hesap durduruldu." : "Hesap açıldı.", "ok");
     loadUsers();
     openDetail(detailUser);
   } catch (e) {
@@ -212,12 +212,12 @@ $("inviteform").addEventListener("submit", async (ev) => {
   try {
     const v = await invoke("admin_invite", {
       username: $("iv-user").value.trim(),
-      openingKrs: parseInt($("iv-bal").value, 10),
+      opening_krs: parseInt($("iv-bal").value, 10),
       code: $("iv-code").value.trim() === "" ? null : $("iv-code").value.trim(),
     });
     $("codewrap").hidden = false;
     $("codebig").textContent = v.code;
-    say("Davet hazir (" + v.username + ").", "ok");
+    say("Davet hazır (" + v.username + ").", "ok");
   } catch (e) {
     say(fmtErr(e), "err");
   }
@@ -245,11 +245,11 @@ $("tariffform").addEventListener("submit", async (ev) => {
     const fx = $("tf-fixed").value.trim();
     const bp = $("tf-bp").value.trim();
     await invoke("admin_set_tariff", {
-      homeKrsPerMin: parseInt($("tf-home").value, 10),
-      fallbackFixed: fx === "" ? null : parseInt(fx, 10),
-      fallbackBp: bp === "" ? null : parseInt(bp, 10),
+      home_krs_per_min: parseInt($("tf-home").value, 10),
+      fallback_fixed: fx === "" ? null : parseInt(fx, 10),
+      fallback_bp: bp === "" ? null : parseInt(bp, 10),
     });
-    say("Tarife sonraki isteklere uygulanir.", "ok");
+    say("Tarife sonraki isteklere uygulanır.", "ok");
     loadTariffs();
   } catch (e) {
     say(fmtErr(e), "err");
@@ -271,7 +271,7 @@ async function loadVendor() {
     const v = await invoke("admin_vendor");
     paintVendor(v);
     const s = await invoke("admin_switch");
-    $("swbtn").textContent = "Salter: " + (s.open ? "acik" : "KAPALI");
+    $("swbtn").textContent = "Şalter: " + (s.open ? "açık" : "kapalı");
   } catch (e) {
     say(fmtErr(e), "err");
   }
@@ -282,7 +282,7 @@ $("swbtn").addEventListener("click", async () => {
   try {
     const s = await invoke("admin_switch");
     await invoke("admin_set_switch", { open: !s.open });
-    say(!s.open ? "Fallback acildi." : "Fallback durduruldu (yeni isler bakim retli).", "ok");
+    say(!s.open ? "Fallback açıldı." : "Fallback durduruldu (yeni işler bakım retli).", "ok");
     loadVendor();
   } catch (e) {
     say(fmtErr(e), "err");
@@ -319,7 +319,7 @@ $("vpriceform").addEventListener("submit", async (ev) => {
       fixed: fx === "" ? null : parseInt(fx, 10),
       bp: bp === "" ? null : parseInt(bp, 10),
     });
-    say("Hat fiyati yazildi.", "ok");
+    say("Hat fiyatı yazıldı.", "ok");
     loadVendor();
   } catch (e) {
     say(fmtErr(e), "err");
@@ -332,7 +332,7 @@ $("vsecbtn").addEventListener("click", async () => {
       vendor: $("vp-vendor").value,
       secs: parseInt($("vp-secs").value, 10),
     });
-    say("Hat tabani yazildi.", "ok");
+    say("Hat tabanı yazıldı.", "ok");
     loadVendor();
   } catch (e) {
     say(fmtErr(e), "err");
@@ -373,7 +373,7 @@ $("auditbtn").addEventListener("click", async () => {
     const list = $("auditlist");
     list.textContent = "";
     const rows = (v.entries || []).slice().reverse();
-    if (!rows.length) list.textContent = "kayit yok";
+    if (!rows.length) list.textContent = "kayıt yok";
     for (const e of rows.slice(0, 200)) {
       const d = document.createElement("div");
       const t = new Date(e.at * 1000).toLocaleString("tr-TR");

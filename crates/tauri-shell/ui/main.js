@@ -16,7 +16,7 @@ function tl(kurus) {
 }
 
 function fmtErr(e) {
-  return "Hata: " + (typeof e === "string" ? e : "baglanti-hatasi");
+  return "Hata: " + (typeof e === "string" ? e : "bağlantı-hatası");
 }
 
 async function refreshStatus() {
@@ -82,7 +82,7 @@ async function refreshBroker() {
     $("upd").textContent = notes;
     $("netdot").className = "dot ok";
   } catch (e) {
-    $("ver").textContent = "broker'a ulasilamiyor";
+    $("ver").textContent = "broker'a ulaşılamıyor";
     $("bver").textContent = "—";
     $("netdot").className = "dot err";
     say(fmtErr(e), "err");
@@ -120,7 +120,7 @@ $("redeemform").addEventListener("submit", async (ev) => {
     });
     $("rd-pw").value = "";
     $("rd-code").value = "";
-    say("Hesap acildi (" + r.account + ").", "ok");
+    say("Hesap açıldı (" + r.account + ").", "ok");
     await refreshStatus();
   } catch (e) {
     say(fmtErr(e), "err");

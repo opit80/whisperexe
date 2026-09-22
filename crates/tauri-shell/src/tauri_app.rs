@@ -224,6 +224,8 @@ fn setup_tray(app: &AppHandle) {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
+                } else {
+                    eprintln!("tauri: 'main' penceresi kayitli degil");
                 }
             }
             "cik" => app.exit(0),
