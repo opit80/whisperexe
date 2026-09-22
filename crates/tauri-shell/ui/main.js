@@ -849,8 +849,8 @@ async function admLoadServer() {
   try {
     const v = await invoke("server_status");
     $("adm-srvcur").textContent = v.running
-      ? "çalışıyor (127.0.0.1:8899)"
-      : "duruyor (server.bat ile başlat)";
+      ? (v.kind === "wl" ? "çalışıyor (wl --serve 127.0.0.1:8888)" : "çalışıyor (broker 127.0.0.1:8899)")
+      : "duruyor (Sunucuyu başlat ile baslat.bat çalışır)";
   } catch (e) {
     admSay(fmtErr(e), "err");
   }

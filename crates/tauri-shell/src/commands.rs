@@ -533,9 +533,13 @@ pub fn mic_set(app: tauri::AppHandle, name: Option<String>) -> Result<Value, Str
 
 // ---- yerel sunucu (yonetimden server.bat baslat + durum) ---
 
-/// Aday yollar (ilk bulunan calistirilir).
+/// Aday yollar (ilk bulunan calistirilir; simdilik canli `wl --serve`
+/// `baslat.bat` oncelikli — sahip karari).
 fn server_candidates() -> Vec<std::path::PathBuf> {
     let mut v = Vec::new();
+    v.push(std::path::PathBuf::from(
+        r"C:\projelerim\whisper\server\baslat.bat",
+    ));
     if let Ok(cwd) = std::env::current_dir() {
         v.push(cwd.join("server.bat"));
     }
@@ -570,15 +574,25 @@ pub fn server_start() -> Result<Value, String> {
     Ok(json!({"ok": true, "path": path.to_string_lossy()}))
 }
 
-/// Yerel broker kapida mi (`127.0.0.1:8899/v1/version`).
+/// Yerel sunucu kapida mi: once `wl --serve` (127.0.0.1:8888/v1/stats),
+/// sonra broker (127.0.0.1:8899/v1/version).
 #[tauri::command]
 pub fn server_status() -> Value {
-    let running = crate::net::agent()
+    let wl = crate::net::agent()
+        .get("http://127.0.0.1:8888/v1/stats")
+        .call()
+        .ok()
+        .and_then(|res| res.into_body().read_to_string().ok())
+        .is_some();
+    if wl {
+        return json!({"running": true, "kind": "wl"});
+    }
+    let broker = crate::net::agent()
         .get("http://127.0.0.1:8899/v1/version")
         .call()
         .ok()
         .and_then(|res| res.into_body().read_to_string().ok())
         .map(|b| b.contains("\"ok\":true") || b.contains("\"ok\": true"))
         .unwrap_or(false);
-    json!({"running": running})
+    json!({"running": broker, "kind": if broker { json!("broker") } else { Value::Null }})
 }
