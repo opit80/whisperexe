@@ -9,12 +9,13 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use argon2::Argon2;
 use rand::distributions::Alphanumeric;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub const INVITE_TTL_SECS: u64 = 7 * 24 * 3600;
 pub const DEFAULT_DEVICE_SLOTS: usize = 2;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Invite {
     pub code: String,
     pub username: String,
@@ -24,13 +25,13 @@ pub struct Invite {
     pub redeemed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceBinding {
     pub hwid: String,
     pub bound_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub username: String,
     pub balance_krs: i64,
@@ -112,7 +113,7 @@ fn verify_password(hash: &str, password: &str) -> bool {
         .is_ok()
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AccountStore {
     pub invites: HashMap<String, Invite>,
     pub accounts: HashMap<String, Account>,

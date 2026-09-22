@@ -37,6 +37,10 @@ impl Drop for BrokerProc {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.ledger);
+        // Anlık görüntü defterle aynı dizinde; çöp bırakma.
+        if let Some(dir) = self.ledger.parent() {
+            let _ = std::fs::remove_file(dir.join("panel.json"));
+        }
     }
 }
 

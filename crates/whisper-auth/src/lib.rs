@@ -18,6 +18,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::{Deserialize, Serialize};
+
 // ---------------------------------------------------------------------------
 // Sabitler
 // ---------------------------------------------------------------------------
@@ -344,7 +346,7 @@ fn valid_hwid(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && !s.contains('|') && !s.contains(' ')
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invite {
     pub code: String,
     pub created_at_secs: u64,
@@ -352,7 +354,7 @@ pub struct Invite {
     pub used_by: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RefreshRecord {
     hwid: String,
     expires_at: u64,
@@ -361,7 +363,7 @@ struct RefreshRecord {
     rotated: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: String,
     password_hash: String,
@@ -385,11 +387,17 @@ pub struct AdminAlert {
 
 /// Bellek-içi auth deposu. Üretimde broker bunu kalıcı depoya bağlar;
 /// tüm kurallar burada tek-elden uygulanır (saat parametreyle girer).
-#[derive(Debug, Default)]
+///
+/// Kalıcılık: `secret` (ortamdan gelir) ve `alerts` (geçici uyarı kuyruğu)
+/// anlık görüntüye YAZILMAZ; yüklemede sır yeniden verilir
+/// ([`AuthStore::set_secret`]).
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AuthStore {
+    #[serde(skip)]
     secret: Vec<u8>,
     invites: HashMap<String, Invite>,
     accounts: HashMap<String, Account>,
+    #[serde(skip)]
     pub alerts: Vec<AdminAlert>,
     token_ctr: u64,
 }
@@ -417,6 +425,11 @@ impl AuthStore {
             secret: secret.to_vec(),
             ..Default::default()
         }
+    }
+
+    /// Anlık görüntüden yüklemede sırrı yeniden verir (sır dosyaya yazılmaz).
+    pub fn set_secret(&mut self, secret: &[u8]) {
+        self.secret = secret.to_vec();
     }
 
     // -- davet --

@@ -3,6 +3,7 @@
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use serde::{Deserialize, Serialize};
 
 pub const MAX_FAILED: u32 = 5;
 pub const LOCK_SECS: u64 = 300;
@@ -24,7 +25,7 @@ impl std::fmt::Display for AdminError {
 
 impl std::error::Error for AdminError {}
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AdminAuth {
     hash: Option<String>,
     failed: u32,

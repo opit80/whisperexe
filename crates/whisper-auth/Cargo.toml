@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 description = "F1a: davet kodu, sifre + HWID slot, access/refresh JWT (std-only HMAC-SHA256), kilit + admin uyari"
 license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

@@ -6,7 +6,7 @@
 //!   (ses + metin + önbellek; işlem loglanır).
 //! - Disk %80 uyarısı işçi / broker / arşiv disklerinde ayrı izlenir.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiskKind {
     Worker,
     Broker,
@@ -26,7 +26,9 @@ impl DiskKind {
 /// %80 doluluk uyarı eşiği.
 pub const DISK_WARN_PCT: u8 = 80;
 
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskStatus {
     pub kind: DiskKind,
     /// Doluluk yüzdesi 0..=100.
@@ -39,7 +41,7 @@ impl DiskStatus {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct DiskMonitor {
     pub disks: Vec<DiskStatus>,
 }

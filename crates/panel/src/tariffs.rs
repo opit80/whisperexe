@@ -6,7 +6,9 @@
 //! `tarife * faturalı_sn / 60`. Tarife kabul anında dondurulur: bloke edilen
 //! sürümle kesinleşir (sürüm numarası teklifte taşınır).
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Line {
     Home,
     Fallback,
@@ -21,7 +23,7 @@ pub const OPENAI_UPSTREAM_MIN_SECS: u64 = 3;
 
 /// Fallback sağlayıcı seçimi (panelden dinamik; varsayılan Groq).
 /// Karar: `docs/FALLBACK.md` §1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FallbackVendor {
     Groq,
     OpenAi,
@@ -53,13 +55,13 @@ impl FallbackVendor {
 }
 
 /// Hat-bazlı saklanan fallback yapılandırması (aktif + pasif hat).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VendorCfg {
     pub price: FallbackPrice,
     pub upstream_min_secs: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FallbackPrice {
     /// Ev tarifesinin baz puan cinsinden çarpanı (örn. 50000 = 5x).
     MultiplierBp(u64),
@@ -67,7 +69,7 @@ pub enum FallbackPrice {
     FixedKrsPerMin(i64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tariff {
     pub version: u64,
     pub home_krs_per_min: i64,
@@ -118,7 +120,7 @@ pub struct Quote {
     pub tariff_version: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TariffTable {
     current: Tariff,
     vendor: FallbackVendor,

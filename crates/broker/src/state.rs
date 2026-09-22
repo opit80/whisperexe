@@ -33,6 +33,7 @@ use panel::{
     tariffs::{FallbackPrice, FallbackVendor, Line as PanelLine, Tariff as PanelTariff},
 };
 use provider::{DecodeError, GateConfig, GateReject, OpusDecoder, PCM_RATE_HZ, PcmAudio, gate};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use whisper_auth::{AuthError, AuthStore};
@@ -52,6 +53,10 @@ pub const DEFAULT_FALLBACK_BP: u64 = 50000;
 pub const STALE_BLOCK_TIMEOUT_SECS: u64 = 3600;
 /// Admin oturum ömrü: 24 saat.
 pub const ADMIN_TOKEN_TTL_SECS: u64 = 24 * 3600;
+/// Anlık görüntü biçimi sürümü (uyumsuzsa temiz başlanır).
+const SNAPSHOT_VERSION: u32 = 1;
+/// Anlık görüntü dosyası adı (defterle aynı dizinde).
+const SNAPSHOT_FILE: &str = "panel.json";
 
 // ---------------------------------------------------------------------------
 // Hata
@@ -237,9 +242,27 @@ pub struct BrokerState {
     stale_timeout: u64,
 }
 
+fn snapshot_path_for(ledger_path: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(ledger_path);
+    match p.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.join(SNAPSHOT_FILE),
+        _ => std::path::PathBuf::from(SNAPSHOT_FILE),
+    }
+}
+
+/// Restart-dayanıklı durum zarfı (sırlar hariç).
+#[derive(Serialize, Deserialize)]
+struct Snapshot {
+    v: u32,
+    auth: AuthStore,
+    panel: PanelState,
+    token_ctr: u64,
+    req_seq: u64,
+}
+
 impl BrokerState {
     pub fn new(secret: &[u8], ledger_path: String) -> Self {
-        Self {
+        let mut s = Self {
             auth: AuthStore::new(secret),
             ledger: Ledger::new(),
             cache: ResultCache::new(),
@@ -253,7 +276,72 @@ impl BrokerState {
             ledger_persisted: 0,
             ledger_path,
             stale_timeout: STALE_BLOCK_TIMEOUT_SECS,
+        };
+        s.load_snapshot(secret);
+        s
+    }
+
+    // -- anlık görüntü (restart-dayanıklılık) --
+    //
+    // Kapsam: auth (hesap/davet/refresh) + panel (admin hash, hesap/davet,
+    // tarife, şalter, besleme, denetim) + sayaçlar. YAZILMAYANLAR: sır
+    // (ortamdan gelir), geçici admin jetonları, sağlayıcı anahtarları
+    // (bellek-içi), kuyruk/rota/önbellek (geçici), defter (zaten JSONL).
+
+    fn snapshot_path(&self) -> std::path::PathBuf {
+        snapshot_path_for(&self.ledger_path)
+    }
+
+    /// Değişen her istekten sonra çağrılır (GET atlanır; kilit çağıranda).
+    pub fn save_snapshot(&self) {
+        let snap = Snapshot {
+            v: SNAPSHOT_VERSION,
+            auth: self.auth.clone(),
+            panel: self.panel.clone(),
+            token_ctr: self.token_ctr,
+            req_seq: self.req_seq,
+        };
+        let text = match serde_json::to_string(&snap) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("broker: anlik goruntu serilestirilemedi: {e}");
+                return;
+            }
+        };
+        let path = self.snapshot_path();
+        let tmp = path.with_extension("json.tmp");
+        if let Err(e) = std::fs::write(&tmp, text) {
+            eprintln!("broker: anlik goruntu yazilamadi: {e}");
+            return;
         }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            eprintln!("broker: anlik goruntu tasinamadi: {e}");
+        }
+    }
+
+    fn load_snapshot(&mut self, secret: &[u8]) {
+        let path = self.snapshot_path();
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(r) => r,
+            Err(_) => return, // ilk kurulum: dosya yok, temiz başlanır.
+        };
+        let snap: Snapshot = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("broker: anlik goruntu okunamadi ({e}), temiz baslatiliyor");
+                return;
+            }
+        };
+        if snap.v != SNAPSHOT_VERSION {
+            eprintln!("broker: anlik goruntu surumu uyumsuz, temiz baslatiliyor");
+            return;
+        }
+        self.auth = snap.auth;
+        self.auth.set_secret(secret);
+        self.panel = snap.panel;
+        self.token_ctr = snap.token_ctr;
+        self.req_seq = snap.req_seq;
+        eprintln!("broker: anlik goruntu yuklendi ({})", path.display());
     }
 
     // -- defter kalıcılığı (append-only JSONL; salt audit izi) --
@@ -955,6 +1043,12 @@ mod tests {
 
     fn state(path: &str) -> BrokerState {
         let _ = std::fs::remove_file(path);
+        // Anlık görüntü aynı dizinde durur; bayat dosya testi kirletmesin.
+        let snap = std::path::Path::new(path)
+            .parent()
+            .map(|d| d.join("panel.json"))
+            .unwrap_or_else(|| std::path::PathBuf::from("panel.json"));
+        let _ = std::fs::remove_file(&snap);
         BrokerState::new(b"test-secret-xyz", path.to_string())
     }
 
@@ -1157,5 +1251,35 @@ mod tests {
         assert_eq!(r["stored"], json!(false));
         assert_eq!(st.vendor_get()["groq"]["key_set"], json!(false));
         let _ = std::fs::remove_file("test-ledger-vendor.jsonl");
+    }
+
+    #[test]
+    fn snapshot_survives_restart() {
+        // Yeniden başlatma: admin kurulumu + davet + hesap kaybolmaz.
+        let dir = std::env::temp_dir().join("whisperexe-broker-snap");
+        let _ = std::fs::create_dir_all(&dir);
+        let ledger = dir.join("ledger.jsonl").to_string_lossy().to_string();
+        let snap = dir.join("panel.json");
+        let _ = std::fs::remove_file(&ledger);
+        let _ = std::fs::remove_file(&snap);
+        let secret = b"snapshot-test-secret";
+        let mut st = BrokerState::new(secret, ledger.clone());
+        st.admin_setup("yonetici-sifresi-123").unwrap();
+        st.create_invite("ali", 5000, Some("DAVET-SNAP"), 1000).unwrap();
+        st.redeem("DAVET-SNAP", "gizli-sifre-1", "hwid-A", 1001).unwrap();
+        st.save_snapshot();
+        assert!(snap.exists(), "anlik goruntu yazilmali");
+        // Ayni sırla yeniden başlat: her şey yerinde.
+        let mut st2 = BrokerState::new(secret, ledger.clone());
+        assert!(st2.admin_login("yonetici-sifresi-123", 1002).is_ok());
+        assert!(st2.panel.accounts.invites.contains_key("DAVET-SNAP"));
+        assert!(st2.panel.accounts.get("ali").is_some());
+        let p = st2.login("ali", "gizli-sifre-1", "hwid-A", None, 1003).unwrap();
+        assert_eq!(p["account"], json!("ali"));
+        // Sırlar dosyaya SIZMAZ (hash'ler argon2, anahtar yok).
+        let raw = std::fs::read_to_string(&snap).unwrap();
+        assert!(!raw.contains("gizli-sifre-1"));
+        let _ = std::fs::remove_file(&ledger);
+        let _ = std::fs::remove_file(&snap);
     }
 }

@@ -21,6 +21,7 @@ use api::{AuditLog, ROUTES};
 use feed::{FeedState, Release, UpdateCheck};
 use retention::{DiskKind, DiskMonitor, DiskStatus, HardDeleteReport};
 use routing::{admit, FallbackSwitch, RouteError, SpendEntry};
+use serde::{Deserialize, Serialize};
 use tariffs::{FallbackPrice, FallbackVendor, Line, Quote, Tariff, TariffTable};
 use users::{HwidResetEntry, HwidResetLog, UserRow};
 
@@ -33,7 +34,7 @@ fn default_table() -> TariffTable {
     TariffTable::new(DEFAULT_HOME_KRS, FallbackPrice::MultiplierBp(DEFAULT_FB_BP))
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PanelState {
     pub accounts: AccountStore,
     pub admin: AdminAuth,
@@ -47,6 +48,8 @@ pub struct PanelState {
     /// Sağlayıcı API anahtarları: YALNIZCA bellek-içi. Hiçbir yanıta,
     /// denetim detayına, deftere ya da dosyaya yazılmaz. Yeniden başlatmada
     /// silinir (panelden yeniden girilir); boşsa ortam değişkenine düşülür.
+    /// Anlık görüntüye de yazılmaz ([`serde(skip)`]).
+    #[serde(skip)]
     pub secrets: ProviderSecrets,
 }
 

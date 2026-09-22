@@ -159,6 +159,12 @@ fn handle_conn(stream: TcpStream, state: &Arc<Mutex<BrokerState>>) {
     };
     let (status, body) = dispatch(&req, state);
     respond(&mut s, status, &body);
+    // Değişen istek sonrası anlık görüntü (GET salt-okunur, atlanır).
+    if req.method != "GET" {
+        if let Ok(st) = state.lock() {
+            st.save_snapshot();
+        }
+    }
 }
 
 // -- gövde yardımcıları --
@@ -414,6 +420,12 @@ mod tests {
 
     fn test_server(ledger: &str) -> (String, Arc<Mutex<BrokerState>>) {
         let _ = std::fs::remove_file(ledger);
+        // Anlık görüntü bayatı testi kirletmesin (defterle aynı dizin).
+        let snap = std::path::Path::new(ledger)
+            .parent()
+            .map(|d| d.join("panel.json"))
+            .unwrap_or_else(|| std::path::PathBuf::from("panel.json"));
+        let _ = std::fs::remove_file(&snap);
         let st = Arc::new(Mutex::new(BrokerState::new(b"http-test-secret", ledger.to_string())));
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = format!("http://{}", l.local_addr().unwrap());
@@ -533,6 +545,12 @@ mod tests {
         let (st, _) = call(&addr, "GET", "/v1/version", &[], &[]);
         assert_eq!(st, 200);
         let _ = std::fs::remove_file(&ledger);
+        let _ = std::fs::remove_file(
+            std::path::Path::new(&ledger)
+                .parent()
+                .map(|d| d.join("panel.json"))
+                .unwrap_or_else(|| std::path::PathBuf::from("panel.json")),
+        );
     }
 
     use serde_json::json;

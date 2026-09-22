@@ -16,5 +16,6 @@ broker-core = { path = "../broker-core" }
 provider = { path = "../provider" }
 ev-worker = { path = "../ev-worker" }
 panel = { path = "../panel" }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

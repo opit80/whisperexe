@@ -6,6 +6,7 @@
 
 use crate::accounts::{Account, AccountError};
 use crate::tariffs::{Line, Tariff};
+use serde::{Deserialize, Serialize};
 
 /// Sık reset eşiği: 30 günde bu kadar reset uyarı üretir.
 pub const RESET_WARN_COUNT: usize = 3;
@@ -27,12 +28,12 @@ pub struct UserRow {
     pub hwid_reset_warning: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HwidResetLog {
     pub entries: Vec<HwidResetEntry>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HwidResetEntry {
     pub username: String,
     pub at: u64,

@@ -8,6 +8,7 @@
 
 use crate::accounts::{Account, AccountError};
 use crate::tariffs::Line;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteError {
@@ -28,7 +29,7 @@ impl std::fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FallbackSwitch {
     /// true = fallback harcaması açık (normal); false = durduruldu.
     pub open: bool,
@@ -41,7 +42,7 @@ impl Default for FallbackSwitch {
 }
 
 /// Harcama kaydı (limit kontrolleri için; panel ölçeğinde tutulur).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SpendEntry {
     pub at: u64,
     pub line: Line,

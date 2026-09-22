@@ -4,6 +4,8 @@
 //! `ROUTES` tablosundaki işleve bağlar. Tüm admin işlemleri denetim
 //! günlüğüne (`AuditLog`) yazılır.
 
+use serde::{Deserialize, Serialize};
+
 /// (yöntem, yol, açıklama) — panel API özeti.
 pub const ROUTES: &[(&str, &str, &str)] = &[
     ("POST", "/v1/admin/setup", "kurulum: yerel admin sifresi (bir kez, argon2)"),
@@ -41,7 +43,7 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     ("GET", "/v1/audit", "admin islem gunlugu"),
 ];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub at: u64,
     pub admin: String,
@@ -49,7 +51,7 @@ pub struct AuditEntry {
     pub detail: String,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AuditLog {
     pub entries: Vec<AuditEntry>,
 }

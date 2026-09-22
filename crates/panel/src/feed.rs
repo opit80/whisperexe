@@ -14,6 +14,7 @@
 //! anahtarı + public-key doğrulama kullanılır.
 
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,7 +34,7 @@ impl std::fmt::Display for FeedError {
 
 impl std::error::Error for FeedError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Release {
     pub version: String,
     pub notes: String,
@@ -44,7 +45,7 @@ pub struct Release {
     pub published_at: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedState {
     /// Panelde duran TEK sır: public key (private ASLA burada yok).
     pub public_key: [u8; 32],
