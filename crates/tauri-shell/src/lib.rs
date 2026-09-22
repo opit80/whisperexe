@@ -38,6 +38,7 @@ pub mod flow;
 pub mod hotkey;
 #[cfg(feature = "tauri")]
 pub mod mic_cap;
+pub mod transcribe;
 #[cfg(feature = "tauri")]
 pub mod commands;
 #[cfg(feature = "tauri")]

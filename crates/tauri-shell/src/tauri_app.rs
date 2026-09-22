@@ -59,6 +59,8 @@ pub(crate) struct AppState {
     pub(crate) shell: Mutex<Shell>,
     pub(crate) hotkey: Mutex<String>,
     pub(crate) mic: Mutex<Option<String>>,
+    /// Son birakmanin 16kHz mono sesi (yerel transkripsiyon girisi).
+    pub(crate) last_pcm: Mutex<Vec<i16>>,
 }
 
 pub(crate) fn hotkey_path(app: &AppHandle) -> std::path::PathBuf {
@@ -91,6 +93,7 @@ pub fn run() {
             shell: Mutex::new(Shell::new(false)),
             hotkey: Mutex::new(crate::hotkey::DEFAULT_HOTKEY.to_string()),
             mic: Mutex::new(None),
+            last_pcm: Mutex::new(Vec::new()),
         })
         .manage(Mutex::new(crate::session::UserSession::default()))
         .manage(Mutex::new(crate::session::AdminSession::default()))
@@ -185,6 +188,7 @@ pub fn run() {
                             };
                             emit_overlay(app);
                             if sending {
+                                spawn_transcribe(app.clone());
                                 schedule_send_timeout(app.clone());
                             }
                         })
@@ -332,8 +336,10 @@ pub(crate) fn mic_begin(app: &AppHandle) {
 /// Kısayol bırakıldı: biriken sesi 1sn'lik 16kHz dilimler halinde kabuga
 /// besler (o anki `push_second` akisi; bos ise sessiz sayilir).
 pub(crate) fn mic_feed(app: &AppHandle, shell: &mut Shell) {
-    let _ = app;
     let pcm = crate::mic_cap::capture_stop();
+    if let Some(state) = app.try_state::<AppState>() {
+        *state.last_pcm.lock().expect("ses kilidi") = pcm.clone();
+    }
     for chunk in pcm.chunks(16_000) {
         if !shell.recording() {
             break;
@@ -342,11 +348,47 @@ pub(crate) fn mic_feed(app: &AppHandle, shell: &mut Shell) {
     }
 }
 
-/// Gonderim gozetimi: yukleme iscisi henuz bagli degilse hat `Sending`'de
-/// asili kalmaz; 45sn yanitsizsa hata toast'i + gizlenme.
+/// Birakma sonrasi yerel transkripsiyon: `last_pcm` WAV yapilip
+/// `wl --serve`'e gonderilir; metin overlay'e duser, hata `send_timeout`
+/// yoluna duser (hat asili kalmaz). Ayri izlekte calisir (kilit tutulmaz).
+pub(crate) fn spawn_transcribe(app: AppHandle) {
+    std::thread::spawn(move || {
+        let pcm = app
+            .try_state::<AppState>()
+            .map(|s| s.last_pcm.lock().expect("ses kilidi").clone())
+            .unwrap_or_default();
+        if pcm.is_empty() {
+            return; // Sessiz yol zaten toast'i dustu.
+        }
+        let wav = crate::transcribe::wav_bytes_16k_mono(&pcm);
+        let boundary = "whisperexe";
+        let body = crate::transcribe::multipart_body(boundary, &wav, crate::transcribe::TRANSCRIBE_MODEL);
+        let out = crate::net::download_agent()
+            .post(crate::transcribe::LOCAL_TRANSCRIBE_URL)
+            .header(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            )
+            .send(&body[..])
+            .ok()
+            .and_then(|res| res.into_body().read_to_string().ok())
+            .and_then(|t| crate::transcribe::parse_text(&t));
+        let state = app.state::<AppState>();
+        let mut shell = state.shell.lock().expect("shell kilidi");
+        match out {
+            Some(text) => shell.transcript_arrived(&text),
+            None => shell.send_timeout(),
+        }
+        drop(shell);
+        emit_overlay(&app);
+    });
+}
+
+/// Gonderim gozetimi (yedek): transkripsiyon izlegi her durumda terminal
+/// duruma getirir; bu gozetim 150sn'yi asan asili hati temizler.
 pub(crate) fn schedule_send_timeout(app: AppHandle) {
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(45));
+        std::thread::sleep(Duration::from_secs(150));
         let due = {
             let state = app.state::<AppState>();
             let shell = state.shell.lock().expect("shell kilidi");

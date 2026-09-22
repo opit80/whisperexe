@@ -483,6 +483,7 @@ pub fn hotkeySet(app: tauri::AppHandle, key: String) -> Result<Value, String> {
             };
             crate::tauri_app::emit_overlay(app);
             if sending {
+                crate::tauri_app::spawn_transcribe(app.clone());
                 crate::tauri_app::schedule_send_timeout(app.clone());
             }
         })

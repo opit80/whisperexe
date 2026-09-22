@@ -231,8 +231,8 @@ impl Shell {
         self.ui.on(UiEvent::Queued { position, pending });
     }
 
-    /// Sonuç geldi: overlay `Done`; bekleyen engel/zorunlu güncelleme
-    /// YALNIZCA iş bittikten sonra gösterilir.
+    /// Sonuc geldi: overlay `Done`; bekleyen engel/zorunlu guncelleme
+    /// YALNIZCA is bittikten sonra gosterilir.
     pub fn result_arrived(&mut self) {
         self.in_flight = false;
         self.ui.on(UiEvent::ResultArrived);
@@ -241,6 +241,16 @@ impl Shell {
         } else if self.pending_update {
             self.ui.on(UiEvent::UpdatePending);
         }
+    }
+
+    /// Yerel transkripsiyon metni geldi: `Done` + metin onizlemesi.
+    /// Engel bayragi ayni `result_arrived` kuraliyle isler.
+    pub fn transcript_arrived(&mut self, text: &str) {
+        self.result_arrived();
+        self.ui.on(UiEvent::Toast {
+            text: crate::transcribe::preview(text),
+            kind: client_ui::ToastKind::Info,
+        });
     }
 
     /// Düşük bakiye rozeti (o anki hat tarifesiyle; ~10dk altı).
@@ -505,6 +515,21 @@ mod tests {
         // Gövde tavanı (~2MB) client core'da sabit; tam kayıt altında kalır.
         assert!(client::audio_enc::MAX_BODY_BYTES >= 2 * 1024 * 1024 - 1);
         assert_eq!(client::audio_enc::MAX_SECS, 180);
+    }
+
+    #[test]
+    fn transcript_arrived_shows_done_with_preview() {
+        let mut sh = Shell::new(false);
+        sh.set_logged_in(true);
+        assert!(sh.hotkey_down());
+        sh.push_second(&tone_1s());
+        sh.hotkey_up();
+        assert!(sh.in_flight());
+        sh.transcript_arrived(&"a".repeat(200));
+        assert!(!sh.in_flight());
+        assert_eq!(sh.ui.overlay, Overlay::Done);
+        let toast = sh.ui.toast.clone().expect("metin toast'i");
+        assert!(toast.text.ends_with('…'));
     }
 
     #[test]
