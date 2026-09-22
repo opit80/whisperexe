@@ -5,7 +5,8 @@
 //!  1. `TAURI_BROKER_HOST` + `TAURI_UPDATER_PUBKEY` ortam değişkenlerini ZORUNLU
 //!     kılar (yoksa/geçersizse derleme AÇIK bir hatayla durur).
 //!     Host kuralı: `https://` şarttır; YALNIZCA yerel test için
-//!     `http://127.0.0.1:...` / `http://localhost:...` kabul edilir,
+//!     `http://127.0.0.1:...` / `http://localhost:...` ve ev-dışı kurulum
+//!     için `http://95.70.173.199:...` kabul edilir,
 //!  2. doğrulanmış değerleri `tauri.conf.json` içine yazar
 //!     (`__TAURI_BROKER_HOST__` / `__TAURI_UPDATER_PUBKEY__` + sürüm),
 //!  3. `tauri_build::build()` çalıştırır (Tauri v2 codegen).
@@ -46,6 +47,9 @@ fn read_required_env() -> (String, String) {
     }
     let https = host.starts_with("https://");
     // Sifresiz yalnizca yerel teste izin ver (uretim derlemesi https kalir).
+    // Ev-dis-IP istisnasi: sahip guvenlik sartini kaldirdi; arkadas kurulumu
+    // dogrudan bu makineye http ile baglanir (bkz. modem 8899 yonlendirmesi).
+    let http_ev = host.starts_with("http://95.70.173.199:");
     let http_loopback = host.starts_with("http://") && {
         let rest = host.trim_start_matches("http://");
         rest == "localhost"
@@ -58,11 +62,11 @@ fn read_required_env() -> (String, String) {
             || rest.starts_with("[::1]:")
             || rest.starts_with("[::1]/")
     };
-    if (!https && !http_loopback) || host.contains(char::is_whitespace) {
+    if (!https && !http_loopback && !http_ev) || host.contains(char::is_whitespace) {
         panic!(
             "tauri-shell: TAURI_BROKER_HOST gecersiz ({host:?}). \
-             'https://' ile baslamali (yerel test icin 'http://127.0.0.1:...' olur), \
-             bosluk icermemeli."
+             'https://' ile baslamali (yerel test 'http://127.0.0.1:...', \
+             ev-disi 'http://95.70.173.199:...' olur), bosluk icermemeli."
         );
     }
     if looks_like_placeholder(&host) {

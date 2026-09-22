@@ -25,7 +25,7 @@ use broker_core::{
     Lane as CoreLane, PopOutcome, Queue, QueueConfig, QueuedReq, RouteConfig, RouteTable,
 };
 use ev_worker::{
-    InferenceBackend, MockBackend, RECONCILE_TOLERANCE_SECS, measure_secs, reconcile,
+    InferenceBackend, RECONCILE_TOLERANCE_SECS, measure_secs, reconcile,
 };
 use ledger::{Ledger, LedgerError, Line as LedgerLine, Tariff as LedgerTariff};
 use panel::{
@@ -511,11 +511,12 @@ impl BrokerState {
         }
         RouteTable::begin_inference(&mut assign);
 
-        // 8) Ev-worker sahte backend (ölçümde işçi yetkilidir).
+        // 8) Ev-worker arka-ucu (`EV_BACKEND=wl` → gerçek `wl --serve`,
+        //    yoksa sahte; ölçümde işçi yetkilidir).
         let pcm = BrokerDecoder.decode(body).map_err(|_| gate_err(GateReject::Decode))?;
         let worker_secs = measure_secs(pcm.samples.len(), pcm.rate_hz);
         let rec = reconcile(worker_secs, measured_secs, RECONCILE_TOLERANCE_SECS);
-        let text = MockBackend.run(&pcm.samples, pcm.rate_hz);
+        let text = ev_worker::backend().run(&pcm.samples, pcm.rate_hz);
 
         // 9) Boş transkript = başarısız = ÜCRETSİZ (bloke aynen iade, önbellek yok).
         if text.trim().is_empty() {
