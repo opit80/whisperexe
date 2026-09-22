@@ -67,8 +67,40 @@ pub fn decide_boot(current: &str, manifest: &Manifest) -> BootGate {
 }
 
 /// Tek adım: JSON + mevcut sürüm → kapı kararı.
+/// Katı `Manifest` biçimi önce denenir (imzalı besleme varsa o geçerlidir).
+/// Canlı broker panel biçimiyse (`{version, floor_version, ...}`, imza
+/// alanları yok) tolerans uygulanır: `floor_version` dolu ve istemci
+/// altındaysa engelle, yoksa Allow (sahte "çevrimdışı" toast'ı YOK).
+/// Gerçekten bozuk JSON hâlâ hata döner (fail-open + toast korunur).
 pub fn check_at_startup(current: &str, manifest_json: &str) -> Result<BootGate, VersionError> {
-    Ok(decide_boot(current, &parse_manifest(manifest_json)?))
+    if let Ok(manifest) = parse_manifest(manifest_json) {
+        return Ok(decide_boot(current, &manifest));
+    }
+    let v: serde_json::Value =
+        serde_json::from_str(manifest_json).map_err(|e| VersionError::BadJson(e.to_string()))?;
+    let floor = v.get("floor_version").and_then(|x| x.as_str()).unwrap_or("");
+    if !floor.is_empty() && cmp_simple(current, floor) == std::cmp::Ordering::Less {
+        let latest = v
+            .get("version")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(floor)
+            .to_string();
+        return Ok(BootGate::BlockedBelowFloor { latest });
+    }
+    Ok(BootGate::Allow)
+}
+
+/// Basit semver karşılaştırma (major.minor.patch; eksik = 0, bozulan = 0).
+fn cmp_simple(a: &str, b: &str) -> std::cmp::Ordering {
+    fn parts(v: &str) -> [u64; 3] {
+        let mut out = [0u64; 3];
+        for (i, p) in v.split('.').take(3).enumerate() {
+            out[i] = p.parse().unwrap_or(0);
+        }
+        out
+    }
+    parts(a).cmp(&parts(b))
 }
 
 #[cfg(test)]
@@ -119,6 +151,23 @@ mod tests {
             check_at_startup("1.0.0", "{bozuk"),
             Err(VersionError::BadJson(_))
         ));
+    }
+
+    #[test]
+    fn panel_shape_without_floor_allows() {
+        // Canli broker bicimi: imza alani yok, taban bos -> Allow, toast YOK.
+        let body = r#"{"floor_version":"","notes":"besleme henuz yayinlanmadi","ok":true,"platforms":{},"version":"0.0.0-dev"}"#;
+        assert_eq!(check_at_startup("0.1.0", body), Ok(BootGate::Allow));
+    }
+
+    #[test]
+    fn panel_shape_with_floor_blocks_old_client() {
+        let body = r#"{"floor_version":"1.1.0","ok":true,"version":"1.2.0"}"#;
+        assert_eq!(
+            check_at_startup("1.0.5", body),
+            Ok(BootGate::BlockedBelowFloor { latest: "1.2.0".into() })
+        );
+        assert_eq!(check_at_startup("1.1.0", body), Ok(BootGate::Allow));
     }
 
     #[test]
