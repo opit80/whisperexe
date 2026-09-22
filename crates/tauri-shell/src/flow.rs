@@ -285,13 +285,20 @@ impl Shell {
     /// birakilmaz, overlay gizlenir + hata toast'i. Gecici toast 5sn'de
     /// soner (Tauri `emit_overlay` sonumu).
     pub fn send_timeout(&mut self) {
+        self.send_error("Hata: gonderilemedi (hat-yok), kaydın çöpe atıldı.");
+    }
+
+    /// Broker/yerel hat terminal hatasi: `in_flight` bosta cagri etkisizdir,
+    /// doluyken hat temizlenir + verilen metin gosterilir (sırlar metne
+    /// girmez; metin cagiran tarafından sabit listeden secilir).
+    pub fn send_error(&mut self, text: &str) {
         if !self.in_flight {
             return;
         }
         self.in_flight = false;
         self.ui.overlay = Overlay::Hidden;
         self.ui.on(UiEvent::Toast {
-            text: "Hata: gonderilemedi (hat-yok), kaydın çöpe atıldı.".into(),
+            text: text.to_string(),
             kind: client_ui::ToastKind::Error,
         });
     }
@@ -533,8 +540,7 @@ mod tests {
     }
 
     #[test]
-    fn send_timeout_clears_stuck_sending() {
-        // Yukleme iscisi bagli degilse hat asili kalmaz: hata toast'i + gizli.
+    fn send_timeout_clears_stuck_sending() {        // Yukleme iscisi bagli degilse hat asili kalmaz: hata toast'i + gizli.
         let mut sh = Shell::new(false);
         sh.set_logged_in(true);
         assert!(sh.hotkey_down());
@@ -548,6 +554,24 @@ mod tests {
         assert!(toast.text.contains("gonderilemedi"));
         // Bosta cagri etkisizdir.
         sh.send_timeout();
+    }
+
+    #[test]
+    fn send_error_shows_broker_text_and_clears_line() {
+        // Broker relay hatasi: hat temizlenir, hazir metin gosterilir.
+        let mut sh = Shell::new(false);
+        sh.set_logged_in(true);
+        assert!(sh.hotkey_down());
+        sh.push_second(&tone_1s());
+        sh.hotkey_up();
+        assert!(sh.in_flight());
+        sh.send_error("Bakiye yetersiz, yükleme gerekli (ücret yazılmadı).");
+        assert!(!sh.in_flight());
+        assert_eq!(sh.ui.overlay, Overlay::Hidden);
+        let toast = sh.ui.toast.clone().expect("hata toast'i");
+        assert!(toast.text.contains("Bakiye"));
+        // Bosta cagri etkisizdir.
+        sh.send_error("x");
     }
 
     #[test]

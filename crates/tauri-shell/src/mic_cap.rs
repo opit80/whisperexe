@@ -54,6 +54,10 @@ enum Cmd {
     Stop {
         ack: std::sync::mpsc::Sender<Vec<RawChunk>>,
     },
+    /// Tamponu BOSALTMAYAN anlik goruntu (canli sayaç beslemesi icin).
+    Snapshot {
+        ack: std::sync::mpsc::Sender<Vec<RawChunk>>,
+    },
 }
 
 struct Worker {
@@ -93,6 +97,11 @@ fn worker_loop(rx: std::sync::mpsc::Receiver<Cmd>) {
             }
             Cmd::Stop { ack } => {
                 drop(stream.take());
+                let chunks = buf.lock().expect("yakalama kilidi").clone();
+                let _ = ack.send(chunks);
+            }
+            Cmd::Snapshot { ack } => {
+                // Akis SURER, tampon korunur: yalnizca kopya doner.
                 let chunks = buf.lock().expect("yakalama kilidi").clone();
                 let _ = ack.send(chunks);
             }
@@ -200,6 +209,19 @@ pub fn capture_stop() -> Vec<i16> {
         let tx = ensure_worker().ok()?;
         let (ack_tx, ack_rx) = std::sync::mpsc::channel();
         tx.send(Cmd::Stop { ack: ack_tx }).ok()?;
+        ack_rx.recv().ok()
+    })()
+    .unwrap_or_default();
+    to_mono16(&chunks)
+}
+
+/// Akisi SURDURMEDEN o ana dek birikenin 16kHz mono kopyasi (canli sayac).
+/// Donanim yoksa/isci durduysa bos doner (cagiran sayaci oynatmaz).
+pub fn capture_snapshot() -> Vec<i16> {
+    let chunks = (|| -> Option<Vec<RawChunk>> {
+        let tx = ensure_worker().ok()?;
+        let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+        tx.send(Cmd::Snapshot { ack: ack_tx }).ok()?;
         ack_rx.recv().ok()
     })()
     .unwrap_or_default();

@@ -22,6 +22,7 @@ client = { path = "../client" }
 client-ui = { path = "../client-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 cpal = { version = "0.15", optional = true }
 tauri = { version = "2", optional = true , features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = { version = "2", optional = true }

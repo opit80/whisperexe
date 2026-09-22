@@ -14,9 +14,11 @@
 //!   kez sessiz besleme denetimi (10sn gecikmeli, 15sn tavanlı, hatada sessiz);
 //!   yenilik + kayıtlı işaretten yeniyse `UpdatePending` bayrağı kurulur.
 //!   Zorunlu kurulum YALNIZCA boşta (kayıt/in-flight yokken) uygulanır.
-//! - Gerçek mikrofon donanımı bu modülde YOKTUR: `push_second` beslemesi
-//!   donanım `Encoder` arayüzü geldiğinde bağlanır; o güne dek mock yolu
-//!   korunur (kayıt bırakma = sessiz/süre-sıfır yolu).
+//! - Gercek mikrofon bu moduldeden beslenir: basista `mic_begin` yakalamayi
+//!   acar + canli sayac izlegi her saniye tam-saniyeyi `Shell::push_second`
+//!   ile iter (overlay sayaci basılıyken ilerler); birakmada `mic_feed`
+//!   yalnizca kalani besler. Gonderim iki hatlidir: once yerel `wl --serve`
+//!   (ucretsiz), kapida degilse broker relay (ucretli, tutar toast'ta).
 //! - Görünürlük: pencere YALNIZCA [`overlay::is_visible`] `true` iken
 //!   `show`, `false` iken kesin `hide` edilir (hayalet pencere YOK).
 //!   `Done` 3sn sonra kendiliğinden `Hidden`'a düşer (Done->Hidden akışı
@@ -64,6 +66,9 @@ pub(crate) struct AppState {
     pub(crate) mic: Mutex<Option<String>>,
     /// Son birakmanin 16kHz mono sesi (yerel transkripsiyon girisi).
     pub(crate) last_pcm: Mutex<Vec<i16>>,
+    /// Canli beslemede kabuga itilen tam-saniye sayisi (birakmada kalan
+    /// dilim beslenir; cift besleme YOK).
+    pub(crate) rec_fed: Mutex<usize>,
 }
 
 pub(crate) fn hotkey_path(app: &AppHandle) -> std::path::PathBuf {
@@ -97,6 +102,7 @@ pub fn run() {
             hotkey: Mutex::new(crate::hotkey::DEFAULT_HOTKEY.to_string()),
             mic: Mutex::new(None),
             last_pcm: Mutex::new(Vec::new()),
+            rec_fed: Mutex::new(0),
         })
         .manage(Mutex::new(crate::session::UserSession::default()))
         .manage(Mutex::new(crate::session::AdminSession::default()))
@@ -328,25 +334,70 @@ fn hotkey_warn(app: &AppHandle, key: &str) {
     });
 }
 
-/// Kısayol basıldı: secili/varsayılan mikrofondan yakalamayi baslat.
+/// Kısayol basıldı: secili/varsayılan mikrofondan yakalamayi baslat +
+/// canli sayac izlegi (her saniye biriken tam-saniyeyi kabuga iter, overlay
+/// `recording` sayaci basılıyken de ilerler; 0sn'de takili kalmaz).
 /// Donanim yoksa sessizce gecilir (birakma sessiz-toast yoluna duser).
 pub(crate) fn mic_begin(app: &AppHandle) {
     let device = app
         .try_state::<AppState>()
         .and_then(|s| s.mic.lock().expect("mikrofon kilidi").clone());
+    if let Some(state) = app.try_state::<AppState>() {
+        *state.rec_fed.lock().expect("sayac kilidi") = 0;
+    }
     if let Err(e) = crate::mic_cap::capture_start(device.as_deref()) {
         eprintln!("mikrofon baslatilamadi ({e}), sessiz yol");
+        return;
     }
+    spawn_live_feeder(app.clone());
+}
+
+/// Basılıyken sayac: o ana dek biriken tam-saniyeler kabuga itilir.
+/// Birakmada `mic_feed` yalnizca KALANI besler (cift sayim YOK). Sessizlik
+/// kapisi/sayac kurali aynen `Shell::push_second`'dedir (erken sessizlik
+/// toast'i artik basılıyken de gorunur).
+fn spawn_live_feeder(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let more = app
+            .try_state::<AppState>()
+            .map(|state| {
+                let pcm = crate::mic_cap::capture_snapshot();
+                let mut shell = state.shell.lock().expect("shell kilidi");
+                if !shell.recording() {
+                    return false;
+                }
+                let total = pcm.len() / 16_000;
+                let mut fed = state.rec_fed.lock().expect("sayac kilidi");
+                while *fed < total && shell.recording() {
+                    let s = *fed;
+                    shell.push_second(&pcm[s * 16_000..(s + 1) * 16_000]);
+                    *fed += 1;
+                }
+                shell.recording()
+            })
+            .unwrap_or(false);
+        emit_overlay(&app);
+        if !more {
+            break;
+        }
+    });
 }
 
 /// Kısayol bırakıldı: biriken sesi 1sn'lik 16kHz dilimler halinde kabuga
-/// besler (o anki `push_second` akisi; bos ise sessiz sayilir).
+/// besler (canli izlegin itmedigi KALAN dilimler; bos ise sessiz sayilir).
 pub(crate) fn mic_feed(app: &AppHandle, shell: &mut Shell) {
     let pcm = crate::mic_cap::capture_stop();
     if let Some(state) = app.try_state::<AppState>() {
         *state.last_pcm.lock().expect("ses kilidi") = pcm.clone();
     }
-    for chunk in pcm.chunks(16_000) {
+    let skip = app
+        .try_state::<AppState>()
+        .map(|s| *s.rec_fed.lock().expect("sayac kilidi"))
+        .unwrap_or(0)
+        .saturating_mul(16_000)
+        .min(pcm.len());
+    for chunk in pcm[skip..].chunks(16_000) {
         if !shell.recording() {
             break;
         }
@@ -354,9 +405,50 @@ pub(crate) fn mic_feed(app: &AppHandle, shell: &mut Shell) {
     }
 }
 
-/// Birakma sonrasi yerel transkripsiyon: `last_pcm` WAV yapilip
-/// `wl --serve`'e gonderilir; metin overlay'e duser, hata `send_timeout`
-/// yoluna duser (hat asili kalmaz). Ayri izlekte calisir (kilit tutulmaz).
+/// Yerel `wl --serve` kapida mi (4sn yoklama; yoksa brokerage dusulur).
+fn wl_up() -> bool {
+    crate::net::probe_agent()
+        .get("http://127.0.0.1:8888/v1/stats")
+        .call()
+        .ok()
+        .and_then(|res| res.into_body().read_to_string().ok())
+        .is_some()
+}
+
+/// Broker relay: ham i16 LE govde + basliklar (`X-Request-Id`,
+/// `X-Audio-Hash`, jeton, HWID). Basarida `(metin, tutar)`; hatada
+/// gosterime hazir Turkce metin doner (sırlar metne girmez).
+fn broker_transcribe(app: &AppHandle, pcm: &[i16]) -> Result<(String, Option<i64>), String> {
+    let (access, hwid) = app
+        .try_state::<Mutex<crate::session::UserSession>>()
+        .map(|s| {
+            let g = s.lock().expect("oturum kilidi");
+            (g.access().map(|x| x.to_string()), g.hwid().to_string())
+        })
+        .unwrap_or((None, String::new()));
+    let token = access
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| "giris-gerekli: once giris yap.".to_string())?;
+    let body = crate::transcribe::fit_broker_body(pcm);
+    let hash = crate::transcribe::sha256_hex(&body);
+    let req_id = crate::transcribe::new_request_id();
+    let url = format!("{}/v1/transcribe", BROKER_BASE.trim_end_matches('/'));
+    let headers = [
+        ("Authorization", format!("Bearer {token}")),
+        ("X-Hwid", hwid),
+        ("X-Request-Id", req_id),
+        ("X-Audio-Hash", hash),
+    ];
+    let (status, text) = crate::net::post_bytes(&url, &headers, &body, "application/octet-stream")
+        .map_err(|e| crate::transcribe::friendly_broker_error(&e))?;
+    crate::transcribe::parse_broker_response(status, &text).map(|r| (r.text, r.cost_kurus))
+}
+
+/// Birakma sonrasi gonderim (iki hatli): once yerel `wl --serve` kapidaysa
+/// oraya (ucretsiz, WAV+multipart); kapida degilse ya da yerelde metin
+/// cikmadiysa broker relay hattina (`POST {broker}/v1/transcribe`, ucretli;
+/// tutar toast'ta gosterilir). Her iki hat da terminal durum uretir (hat
+/// asili kalmaz). Ayri izlekte calisir (kilit tutulmaz).
 pub(crate) fn spawn_transcribe(app: AppHandle) {
     std::thread::spawn(move || {
         let pcm = app
@@ -364,28 +456,54 @@ pub(crate) fn spawn_transcribe(app: AppHandle) {
             .map(|s| s.last_pcm.lock().expect("ses kilidi").clone())
             .unwrap_or_default();
         if pcm.is_empty() {
-            return; // Sessiz yol zaten toast'i dustu.
+            // Gonderim karari verilmisti ama ses yok: hatti temizle.
+            if let Some(state) = app.try_state::<AppState>() {
+                state.shell.lock().expect("shell kilidi").send_timeout();
+            }
+            emit_overlay(&app);
+            return;
         }
-        let wav = crate::transcribe::wav_bytes_16k_mono(&pcm);
-        let boundary = "whisperexe";
-        let body = crate::transcribe::multipart_body(boundary, &wav, crate::transcribe::TRANSCRIBE_MODEL);
-        let out = crate::net::download_agent()
-            .post(crate::transcribe::LOCAL_TRANSCRIBE_URL)
-            .header(
-                "Content-Type",
-                &format!("multipart/form-data; boundary={boundary}"),
-            )
-            .send(&body[..])
-            .ok()
-            .and_then(|res| res.into_body().read_to_string().ok())
-            .and_then(|t| crate::transcribe::parse_text(&t));
-        let state = app.state::<AppState>();
-        let mut shell = state.shell.lock().expect("shell kilidi");
-        match out {
-            Some(text) => shell.transcript_arrived(&text),
-            None => shell.send_timeout(),
+        if wl_up() {
+            let wav = crate::transcribe::wav_bytes_16k_mono(&pcm);
+            let boundary = "whisperexe";
+            let body = crate::transcribe::multipart_body(boundary, &wav, crate::transcribe::TRANSCRIBE_MODEL);
+            let out = crate::net::download_agent()
+                .post(crate::transcribe::LOCAL_TRANSCRIBE_URL)
+                .header(
+                    "Content-Type",
+                    &format!("multipart/form-data; boundary={boundary}"),
+                )
+                .send(&body[..])
+                .ok()
+                .and_then(|res| res.into_body().read_to_string().ok())
+                .and_then(|t| crate::transcribe::parse_text(&t));
+            if let Some(text) = out {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state
+                        .shell
+                        .lock()
+                        .expect("shell kilidi")
+                        .transcript_arrived(&text);
+                }
+                emit_overlay(&app);
+                return;
+            }
+            // Yerel kapida ama metin cikmadi: broker hattina dus.
         }
-        drop(shell);
+        let out = broker_transcribe(&app, &pcm);
+        if let Some(state) = app.try_state::<AppState>() {
+            let mut shell = state.shell.lock().expect("shell kilidi");
+            match out {
+                Ok((text, cost)) => {
+                    let shown = match cost {
+                        Some(c) if c > 0 => format!("{text} (+{c}kr broker)"),
+                        _ => text,
+                    };
+                    shell.transcript_arrived(&shown);
+                }
+                Err(msg) => shell.send_error(&msg),
+            }
+        }
         emit_overlay(&app);
     });
 }

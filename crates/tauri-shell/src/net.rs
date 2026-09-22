@@ -23,6 +23,11 @@ const API_TIMEOUT: Duration = Duration::from_secs(15);
 #[cfg(feature = "tauri")]
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Yerel kapı yoklaması tavanı: 4sn. `wl --serve` yoksa hizli `false`
+/// doner; uzak makine dogrudan broker hattina duser (bekleme YOK).
+#[cfg(feature = "tauri")]
+const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+
 #[cfg(feature = "tauri")]
 fn agent_with(timeout: Duration) -> Agent {
     Agent::config_builder()
@@ -52,6 +57,13 @@ pub(crate) fn agent() -> Agent {
 pub(crate) fn download_agent() -> Agent {
     static D: OnceLock<Agent> = OnceLock::new();
     D.get_or_init(|| agent_with(DOWNLOAD_TIMEOUT)).clone()
+}
+
+/// Yerel kapı (`wl --serve`) yoklaması için kısa tavanlı ajan.
+#[cfg(feature = "tauri")]
+pub(crate) fn probe_agent() -> Agent {
+    static P: OnceLock<Agent> = OnceLock::new();
+    P.get_or_init(|| agent_with(PROBE_TIMEOUT)).clone()
 }
 
 #[cfg(feature = "tauri")]
@@ -141,6 +153,32 @@ pub fn put(base: &str, path: &str, headers: &[(&str, String)], body: &serde_json
         .send_json(body.clone())
         .map_err(|e| format!("baglanti-hatasi:{e}"))?;
     read_json(res)
+}
+
+/// Ham bayt govdeli POST (broker relay: ham i16 LE ses + basliklar).
+/// 4xx/5xx YANIT olarak doner: `(durum, govde-metni)` her durumda okunur;
+/// ag kopmasi `baglanti-hatasi` olur. Govde/jeton hata metnine girmez.
+#[cfg(feature = "tauri")]
+pub fn post_bytes(
+    url: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+    content_type: &str,
+) -> Result<(u16, String), String> {
+    let mut req = agent().post(url);
+    for (k, v) in headers {
+        req = req.header(*k, v);
+    }
+    let res = req
+        .header("Content-Type", content_type)
+        .send(body)
+        .map_err(|e| format!("baglanti-hatasi:{e}"))?;
+    let status = res.status().as_u16();
+    let text = res
+        .into_body()
+        .read_to_string()
+        .map_err(|e| format!("okuma-hatasi:{e}"))?;
+    Ok((status, text))
 }
 
 #[cfg(test)]
