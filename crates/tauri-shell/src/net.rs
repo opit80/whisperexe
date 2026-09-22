@@ -33,6 +33,10 @@ fn agent_with(timeout: Duration) -> Agent {
         )
         .timeout_connect(Some(Duration::from_secs(5)))
         .timeout_global(Some(timeout))
+        // 4xx/5xx YANIT olarak doner (hata degil): govdedeki broker `code`
+        // alani (`account_not_found` vb.) `err_text` ile yuzeye cikar.
+        // Yoksa ureq status'u yutar, kullanici "http status: 404" gorur.
+        .http_status_as_error(false)
         .build()
         .into()
 }
