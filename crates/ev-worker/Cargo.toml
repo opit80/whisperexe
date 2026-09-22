@@ -1,0 +1,8 @@
+[package]
+name = "ev-worker"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ev_worker"
+path = "src/lib.rs"

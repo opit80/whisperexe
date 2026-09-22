@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/target/
+Cargo.lock
+*.pdb
+
+# Tauri / Node (F2'de gerekirse)
+**/node_modules/
+**/dist/
+
+# Python bench yardımcıları
+__pycache__/
+*.pyc
+bench/.venv/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Editör
+.vscode/
+.idea/
+*.swp
+
+# Kayıt / ses / anahtar ASLA repoya girmez
+*.wav
+*.mp3
+*.opus
+*.msi
+*.key
+*.pem
+.env

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!--
+  whisperexe ana pencere (dogrudan acilir).
+  Intent:     arkadas/gunluk kullanici: giris yap, bakiyeni gor, F9'a bas.
+  Hierarchy:  bakiye hero (tabular-nums) > hesap > durum. Tek vurgu #7aa2ff.
+  Motion:     160ms ease-out opacity/transform; reduced-motion'da statik.
+-->
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="./app.css" />
+<style>
+  body { padding: 20px; }
+  .wrap { display: flex; flex-direction: column; gap: 16px; max-width: 520px; margin: 0 auto; }
+  header.top { display: flex; align-items: center; gap: 10px; }
+  header.top .grow { min-width: 0; }
+  #ver { font-size: 12px; }
+  .hero { text-align: left; }
+  .hero h1 { margin: 2px 0 4px; }
+  .hero .mins { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  form.grid { display: flex; flex-direction: column; gap: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; padding: 3px 0; }
+  .kv .k { color: var(--muted); }
+  #msg { min-height: 20px; }
+  footer { display: flex; gap: 8px; align-items: center; }
+  .hint { font-size: 12px; }
+  kbd {
+    font: 600 11px system-ui, sans-serif; border: 1px solid var(--edge-2);
+    border-radius: 6px; padding: 1px 7px; background: var(--s2);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="dot idle" id="netdot"></span>
+    <div class="grow">
+      <div style="font-weight:600">whisperexe</div>
+      <div class="faint" id="ver" style="font-size:12px">broker'a baglaniyor…</div>
+    </div>
+    <button class="ghost" id="adminbtn" type="button">Yönetim</button>
+  </header>
+
+  <section class="panel hero">
+    <div class="eyebrow">bakiye</div>
+    <h1 class="num" id="balance">—</h1>
+    <div class="mins">
+      <span class="badge" id="minev">ev: —</span>
+      <span class="badge" id="minfb">fallback: —</span>
+      <span class="badge warn" id="lowbadge" hidden>10 dk alti</span>
+    </div>
+  </section>
+
+  <section class="panel" id="authpane">
+    <div id="loggedout">
+      <h2>Giriş</h2>
+      <form class="grid" id="loginform">
+        <div>
+          <label class="f" for="li-acc">Kullanıcı adı</label>
+          <input type="text" id="li-acc" autocomplete="username" />
+        </div>
+        <div>
+          <label class="f" for="li-pw">Şifre</label>
+          <input type="password" id="li-pw" autocomplete="current-password" />
+        </div>
+        <div><button class="primary" type="submit" id="loginbtn">Giriş yap</button></div>
+      </form>
+      <h3 style="margin-top:20px">Davetle ilk giriş</h3>
+      <form class="grid" id="redeemform">
+        <div class="two">
+          <div>
+            <label class="f" for="rd-code">Davet kodu</label>
+            <input type="text" id="rd-code" />
+          </div>
+          <div>
+            <label class="f" for="rd-user">Kullanıcı adı</label>
+            <input type="text" id="rd-user" autocomplete="username" />
+          </div>
+        </div>
+        <div>
+          <label class="f" for="rd-pw">Şifre belirle (en az 12 karakter)</label>
+          <input type="password" id="rd-pw" autocomplete="new-password" />
+        </div>
+        <div><button type="submit" id="redeembtn">Hesabı aç</button></div>
+      </form>
+    </div>
+    <div id="loggedin" hidden>
+      <h2>Hesap</h2>
+      <div class="kv"><span class="k">Kullanıcı</span><span id="acc">—</span></div>
+      <div class="kv"><span class="k">Cihaz</span><span class="faint num" id="hwid">—</span></div>
+      <div class="row" style="margin-top:12px">
+        <button type="button" id="mebtn">Bakiyeyi tazele</button>
+        <button type="button" class="ghost" id="logoutbtn">Çıkış</button>
+      </div>
+    </div>
+    <div class="msg" id="msg" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Durum</h2>
+    <div class="kv"><span class="k">Broker</span><span class="faint num" id="broker">—</span></div>
+    <div class="kv"><span class="k">Sürüm</span><span id="bver">—</span></div>
+    <div class="kv"><span class="k">Taban</span><span id="bfloor">—</span></div>
+    <div class="kv"><span class="k">Güncelleme</span><span id="upd">—</span></div>
+  </section>
+
+  <footer>
+    <span class="hint muted"><kbd>F9</kbd> basılı tutarak konuş, bırakınca gönderilir.</span>
+  </footer>
+</div>
+<script src="./main.js"></script>
+</body>
+</html>

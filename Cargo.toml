@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+# F1+ crate'leri buraya düşer (sahipleri ayrı ajanlar):
+# crates/whisper-auth, crates/ledger, crates/protocol, crates/broker-core,
+# crates/ev-worker, crates/provider, crates/panel, crates/client
+# F0 bu içleri OLUŞTURMAZ; sadece workspace iskeleti kurar.

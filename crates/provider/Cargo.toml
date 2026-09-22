@@ -1,0 +1,8 @@
+[package]
+name = "provider"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "provider"
+path = "src/lib.rs"

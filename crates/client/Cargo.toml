@@ -1,0 +1,18 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2021"
+description = "whisperexe Windows istemci çekirdeği: auth, F9 bas-konus, kuyruk, bakiye, updater (Tauri bagimsiz)"
+
+[dependencies]
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ed25519-dalek = "2"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[dev-dependencies]
+ed25519-dalek = "2"

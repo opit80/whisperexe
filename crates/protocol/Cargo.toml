@@ -1,0 +1,6 @@
+[package]
+name = "whisper-protocol"
+version = "0.1.0"
+edition = "2021"
+description = "F1a: istek/kimlik/ses_hash dogrulama, Opus kabul, hata kodlari, idempotency + 24saat sonuc onbellegi, boru-hatti sirasi"
+license = "MIT"

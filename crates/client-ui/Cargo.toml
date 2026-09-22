@@ -1,0 +1,8 @@
+[package]
+name = "client-ui"
+version = "0.1.0"
+edition = "2021"
+description = "whisperexe durum overlay'i durum makinesi (Tauri/WebView2 sonradan baglanir)"
+
+[dependencies]
+client = { path = "../client" }

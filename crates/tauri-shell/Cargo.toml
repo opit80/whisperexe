@@ -1,0 +1,41 @@
+[package]
+name = "tauri-shell"
+version = "0.1.0"
+edition = "2021"
+description = "whisperexe Tauri Windows kabugu: F9 global-shortcut -> client cekirdek -> client-ui overlay (tek EXE, kullanici-seviyesi kurulum)"
+
+[features]
+default = []
+# Gercek Tauri kabugu: F9 kisayolu + updater + broker feed.
+# KAPALIYKEN `cargo build/test -p tauri-shell` Tauri'siz gecer (saf mantik).
+tauri = [
+  "dep:tauri",
+  "dep:tauri-build",
+  "dep:tauri-plugin-global-shortcut",
+  "dep:tauri-plugin-updater",
+  "dep:ureq",
+]
+
+[dependencies]
+client = { path = "../client" }
+client-ui = { path = "../client-ui" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", optional = true , features = [] }
+tauri-plugin-global-shortcut = { version = "2", optional = true }
+tauri-plugin-updater = { version = "2", optional = true }
+# Eszamanli HTTP (std-disi async YOK): broker API istemcisi.
+# platform-verifier: OS sertifika deposuna guven (ozel CA kurulumuyla calisir,
+# kodda pin YOK; zincir dogrulamasi normal yapilir).
+ureq = { version = "3", optional = true, features = ["platform-verifier", "json"] }
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true , features = [] }
+# build.rs, tauri.conf.json islemede kullanir (duzenli bagimliliklar
+# build script'e baglanamaz; o yuzden burada tekrar listelenir).
+serde_json = "1"
+
+[[bin]]
+name = "tauri-shell"
+path = "src/main.rs"
+required-features = ["tauri"]

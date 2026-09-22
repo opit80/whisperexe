@@ -1,0 +1,20 @@
+[package]
+name = "broker"
+version = "0.1.0"
+edition = "2021"
+description = "whisperexe broker HTTP sunucu iskeleti (G1, LAN asamalari, TLS yok, ev-only, mock upstream, senkron minimal HTTP)"
+
+[[bin]]
+name = "broker"
+path = "src/main.rs"
+
+[dependencies]
+whisper-auth = { path = "../whisper-auth" }
+ledger = { path = "../ledger" }
+whisper-protocol = { path = "../protocol" }
+broker-core = { path = "../broker-core" }
+provider = { path = "../provider" }
+ev-worker = { path = "../ev-worker" }
+panel = { path = "../panel" }
+serde_json = "1"
+sha2 = "0.10"

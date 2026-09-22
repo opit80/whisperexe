@@ -1,0 +1,10 @@
+[package]
+name = "lan-e2e"
+version = "0.1.0"
+edition = "2021"
+description = "whisperexe LAN uçtan uca entegrasyon kanıtı (G4): ephemeral broker + ham TCP HTTP/1.1, TLS yok"
+
+[dependencies]
+tauri-shell = { path = "../tauri-shell" }
+serde_json = "1"
+sha2 = "0.10"

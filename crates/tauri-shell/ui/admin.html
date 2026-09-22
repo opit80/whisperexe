@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<!--
+  whisperexe yonetim (broker paneli).
+  Intent:     ev sahibi: hesap ac, bakiye yukle, hatti gor — tek bakista durum.
+  Hierarchy:  kullanici tablosu odakta; sol serit sekmeler; tehlike isleri inline.
+  Not:        anahtar degerleri EKRANA HIC YAZILMAZ (yalnizca VAR/YOK noktasi).
+-->
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<link rel="stylesheet" href="./app.css" />
+<style>
+  body { padding: 20px; }
+  .wrap { display: flex; flex-direction: column; gap: 16px; max-width: 960px; margin: 0 auto; }
+  header.top { display: flex; align-items: center; gap: 10px; }
+  .shell { display: grid; grid-template-columns: 168px 1fr; gap: 16px; align-items: start; }
+  nav.rail { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 20px; }
+  nav.rail button { text-align: left; }
+  nav.rail button.on { border-color: var(--accent); color: var(--ink); }
+  .pane { display: none; flex-direction: column; gap: 16px; }
+  .pane.on { display: flex; }
+  form.grid { display: flex; flex-direction: column; gap: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  #codebig {
+    font-size: 28px; font-weight: 600; letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums; user-select: all;
+  }
+  .audit { font-size: 12px; max-height: 320px; overflow: auto; }
+  .audit div { padding: 3px 0; border-bottom: 1px solid var(--edge); }
+  .keydot { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="dot idle" id="adot"></span>
+    <div class="grow">
+      <div style="font-weight:600">whisperexe yönetim</div>
+      <div class="faint" style="font-size:12px" id="asub">kilitli</div>
+    </div>
+    <button class="ghost" id="logoutbtn" type="button" hidden>Çıkış</button>
+  </header>
+
+  <section class="panel" id="gate">
+    <h2>Admin girişi</h2>
+    <form class="grid" id="gateform">
+      <div>
+        <label class="f" for="apw">Admin şifresi</label>
+        <input type="password" id="apw" autocomplete="current-password" />
+      </div>
+      <div><button class="primary" type="submit" id="gatebtn">Giriş yap</button></div>
+    </form>
+    <div class="msg" id="gatemsg" role="status" aria-live="polite"></div>
+  </section>
+
+  <div class="shell" id="app" hidden>
+    <nav class="rail" aria-label="Bölümler">
+      <button type="button" data-pane="accounts" class="on">Hesaplar</button>
+      <button type="button" data-pane="invite">Davet</button>
+      <button type="button" data-pane="tariffs">Tarifeler</button>
+      <button type="button" data-pane="fallback">Fallback</button>
+      <button type="button" data-pane="audit">Denetim</button>
+      <button type="button" data-pane="disks">Diskler</button>
+    </nav>
+    <div class="grow">
+      <div class="msg" id="msg" role="status" aria-live="polite"></div>
+
+      <section class="pane on" id="pane-accounts">
+        <div class="panel">
+          <div class="row" style="margin-bottom:12px">
+            <h2 class="grow">Hesaplar</h2>
+            <button type="button" id="usersbtn">Tazele</button>
+          </div>
+          <table class="grid" id="userstable">
+            <thead><tr><th>Kullanıcı</th><th>Bakiye</th><th>Ev sn</th><th>Fb sn</th><th>Durum</th><th></th></tr></thead>
+            <tbody><tr><td colspan="6" class="muted">yükleniyor…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel" id="detail" hidden>
+          <h2 id="dname">—</h2>
+          <div class="two">
+            <form class="grid" id="topupform">
+              <div>
+                <label class="f" for="tp-amt">Bakiye ekle (kuruş)</label>
+                <input type="number" id="tp-amt" min="1" step="1" />
+              </div>
+              <div><button type="submit">Yükle</button></div>
+            </form>
+            <form class="grid" id="capform">
+              <div>
+                <label class="f" for="cp-cap">Fallback günlük tavan (kuruş, boş = sınırsız)</label>
+                <input type="number" id="cp-cap" step="1" />
+              </div>
+              <div><button type="submit">Tavanı koy</button></div>
+            </form>
+          </div>
+          <div class="row" style="margin-top:12px; flex-wrap:wrap">
+            <button type="button" id="homeonlybtn">Sadece-ev: aç/kapat</button>
+            <button type="button" id="hwidbtn">HWID sıfırla</button>
+            <button type="button" id="suspendbtn" class="danger">Durdur / aç</button>
+          </div>
+          <div class="muted" style="font-size:12px; margin-top:8px" id="dmeta">—</div>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-invite">
+        <div class="panel">
+          <h2>Davet aç</h2>
+          <form class="grid" id="inviteform">
+            <div class="two">
+              <div>
+                <label class="f" for="iv-user">Kullanıcı adı</label>
+                <input type="text" id="iv-user" />
+              </div>
+              <div>
+                <label class="f" for="iv-bal">Açılış bakiyesi (kuruş)</label>
+                <input type="number" id="iv-bal" value="10000" min="0" step="1" />
+              </div>
+            </div>
+            <div>
+              <label class="f" for="iv-code">Kod (boş = üretilir)</label>
+              <input type="text" id="iv-code" />
+            </div>
+            <div><button class="primary" type="submit">Davet üret</button></div>
+          </form>
+          <div style="margin-top:16px" id="codewrap" hidden>
+            <div class="eyebrow">kodu yüz yüze ver</div>
+            <div id="codebig">—</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-tariffs">
+        <div class="panel">
+          <div class="row" style="margin-bottom:12px">
+            <h2 class="grow">Tarifeler</h2>
+            <button type="button" id="tariffsbtn">Tazele</button>
+          </div>
+          <div class="muted" style="font-size:13px; margin-bottom:12px" id="tariffcur">—</div>
+          <form class="grid" id="tariffform">
+            <div class="three">
+              <div>
+                <label class="f" for="tf-home">Ev (kuruş/dk)</label>
+                <input type="number" id="tf-home" min="0" step="1" />
+              </div>
+              <div>
+                <label class="f" for="tf-fixed">Fallback sabit (kuruş/dk)</label>
+                <input type="number" id="tf-fixed" min="0" step="1" />
+              </div>
+              <div>
+                <label class="f" for="tf-bp">Fallback çarpan (bp)</label>
+                <input type="number" id="tf-bp" min="1" step="1" />
+              </div>
+            </div>
+            <div><button type="submit">Tarifeyi değiştir</button></div>
+          </form>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-fallback">
+        <div class="panel">
+          <div class="row" style="margin-bottom:12px">
+            <h2 class="grow">Fallback hattı</h2>
+            <button type="button" id="vendorbtn">Tazele</button>
+          </div>
+          <div class="muted" style="font-size:13px; margin-bottom:12px" id="vendorcur">—</div>
+          <div class="row" style="flex-wrap:wrap">
+            <button type="button" id="swbtn">Şalter: aç/kapat</button>
+            <button type="button" id="vgroq">Hat: Groq</button>
+            <button type="button" id="vopenai">Hat: OpenAI</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Hat fiyatı + taban</h2>
+          <form class="grid" id="vpriceform">
+            <div class="three">
+              <div>
+                <label class="f" for="vp-vendor">Hat</label>
+                <select id="vp-vendor"><option value="groq">groq</option><option value="openai">openai</option></select>
+              </div>
+              <div>
+                <label class="f" for="vp-fixed">Sabit (kuruş/dk)</label>
+                <input type="number" id="vp-fixed" min="0" step="1" />
+              </div>
+              <div>
+                <label class="f" for="vp-bp">Çarpan (bp)</label>
+                <input type="number" id="vp-bp" min="1" step="1" />
+              </div>
+            </div>
+            <div class="two">
+              <div>
+                <label class="f" for="vp-secs">Taban (sn, en az 3)</label>
+                <input type="number" id="vp-secs" min="3" max="3600" step="1" />
+              </div>
+              <div style="display:flex; gap:8px; align-items:flex-end">
+                <button type="submit">Fiyatı koy</button>
+                <button type="button" id="vsecbtn">Tabanı koy</button>
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="panel">
+          <h2>Sağlayıcı anahtarları</h2>
+          <div class="muted" style="font-size:13px; margin-bottom:12px">Değerler yalnızca broker belleğinde durur; ekrana ve kayda yazılmaz.</div>
+          <div class="two">
+            <form class="grid" id="keygroq">
+              <div class="keydot"><span class="dot idle" id="kgroq"></span><span>groq</span></div>
+              <div>
+                <label class="f" for="kg-in">Anahtar</label>
+                <input type="password" id="kg-in" autocomplete="off" />
+              </div>
+              <div class="row">
+                <button type="submit">Gir</button>
+                <button type="button" class="ghost" id="kg-clear">Sil</button>
+              </div>
+            </form>
+            <form class="grid" id="keyopenai">
+              <div class="keydot"><span class="dot idle" id="kopenai"></span><span>openai</span></div>
+              <div>
+                <label class="f" for="ko-in">Anahtar</label>
+                <input type="password" id="ko-in" autocomplete="off" />
+              </div>
+              <div class="row">
+                <button type="submit">Gir</button>
+                <button type="button" class="ghost" id="ko-clear">Sil</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-audit">
+        <div class="panel">
+          <div class="row" style="margin-bottom:12px">
+            <h2 class="grow">Denetim</h2>
+            <button type="button" id="auditbtn">Tazele</button>
+          </div>
+          <div class="audit" id="auditlist">—</div>
+        </div>
+      </section>
+
+      <section class="pane" id="pane-disks">
+        <div class="panel">
+          <div class="row" style="margin-bottom:12px">
+            <h2 class="grow">Diskler</h2>
+            <button type="button" id="disksbtn">Tazele</button>
+          </div>
+          <div id="diskscur" class="muted" style="font-size:13px">—</div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<script src="./admin.js"></script>
+</body>
+</html>
