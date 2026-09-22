@@ -1,13 +1,15 @@
 <!DOCTYPE html>
 <!--
-  whisperexe overlay (WebView2, 320x96 şeffaf hap).
-  Intent:     F9 basılıyken göz klavyede; çevresel görüşe tek odak (durum noktası).
-  Hierarchy:  nokta > süre (tabular-nums) > rozet/toast. Tek vurgu #7aa2ff.
-  Motion:     160ms ease-out yalnızca opacity/transform; nabız yok sayılmaz:
-              prefers-reduced-motion'da statik rozet. Sürücü ui/overlay.js'dir
+  whisperexe overlay (WebView2, 320x128 seffaf hap). Kimlik: HAP.
+  Intent:     F9 basiliyken goz klavyede; cevresel goruse tek odak.
+  Hierarchy:  durum noktasi > sure (tabular-nums) > dusuk-bakiye rozeti > toast.
+  Palette:    tek vurgu #7aa2ff; guncelleme halleri kehribar (mevcut dil).
+  Motion:     160ms ease-out yalnizca opacity/transform; nabiz yok sayilmaz:
+              prefers-reduced-motion'da statik rozet. Surucu ./overlay.js
               (harici dosya: Tauri CSP script-src 'self' inline'a izin vermez).
-  Canlı:      Tauri emit("overlay", view) -> __TAURI__.event.listen -> applyState.
-  Önizleme:   tarayıcıda window.applyState(view) çağır; açılış hidden = normal.
+  Canli:      Tauri emit("overlay", view) -> __TAURI__.event.listen -> applyState.
+  Onizleme:   tarayicida window.applyState(view) cagir; acilis hidden = normal.
+              Tum id'ler + data-state adlari korunur (overlay.js sozlesmesi).
 -->
 <html lang="tr">
 <head>
@@ -17,8 +19,9 @@
     --accent: #7aa2ff;
     --ink: #e8eaf0;
     --muted: rgba(232, 234, 240, 0.62);
-    --pill: rgba(18, 20, 28, 0.72);
+    --pill: rgba(18, 20, 28, 0.78);
     --edge: rgba(255, 255, 255, 0.1);
+    --ease: cubic-bezier(0.23, 1, 0.32, 1);
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: transparent; }
@@ -35,16 +38,16 @@
     -webkit-backdrop-filter: blur(20px) saturate(150%);
     backdrop-filter: blur(20px) saturate(150%);
     border: 1px solid var(--edge);
-    border-radius: 14px;
-    padding: 10px 14px;
-    min-width: 232px; max-width: 304px;
-    transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
-                transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+    border-radius: 999px;
+    padding: 9px 16px 9px 12px;
+    min-width: 224px; max-width: 304px;
+    transition: opacity 160ms var(--ease), transform 160ms var(--ease);
   }
   #pill[data-state="hidden"] { opacity: 0; transform: scale(0.95); pointer-events: none; }
   #dot {
-    width: 12px; height: 12px; border-radius: 50%;
+    width: 10px; height: 10px; border-radius: 50%;
     background: var(--accent); flex: none;
+    box-shadow: 0 0 0 3px rgba(122, 162, 255, 0.18);
   }
   #pill[data-state="recording"] #dot.pulse { animation: pulse 1.2s ease-out infinite; }
   @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
@@ -52,22 +55,28 @@
   #pill[data-state="queued"] #dot,
   #pill[data-state="done"] #dot { background: var(--accent); }
   #pill[data-state="update-pending"] #dot,
-  #pill[data-state="update-blocked"] #dot { background: #e0a63c; }
+  #pill[data-state="update-blocked"] #dot { background: #e0a63c; box-shadow: 0 0 0 3px rgba(224, 166, 60, 0.18); }
   #secs {
-    font-size: 20px; font-weight: 600; letter-spacing: -0.01em;
+    font-size: 22px; font-weight: 650; letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums; min-width: 3ch;
   }
-  #label { color: var(--muted); font-size: 12px; }
+  #label {
+    color: var(--muted); font-size: 12px; letter-spacing: 0.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   #badge {
-    margin-left: auto; font-size: 11px; font-weight: 500;
-    border: 1px solid var(--edge); border-radius: 8px;
-    padding: 2px 6px; color: var(--muted); white-space: nowrap;
+    margin-left: auto; flex: none;
+    font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--edge); border-radius: 999px;
+    padding: 2px 8px; color: var(--muted); white-space: nowrap;
   }
   #toast {
     position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
     font-size: 12px; color: var(--ink); background: var(--pill);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
+    backdrop-filter: blur(20px) saturate(150%);
     border: 1px solid var(--edge); border-radius: 10px;
-    padding: 6px 10px; max-width: 300px; text-align: center;
+    padding: 6px 12px; max-width: 300px; text-align: center;
     transition: opacity 160ms ease-out;
   }
   @media (prefers-reduced-motion: reduce) {

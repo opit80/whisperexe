@@ -65,31 +65,51 @@ async function loadUsers() {
   try {
     const v = await invoke("admin_users");
     const rows = v.users || [];
+    tb.textContent = "";
     if (!rows.length) {
-      tb.innerHTML = '<tr><td colspan="6" class="muted">hesap yok — Davet sekmesinden ac.</td></tr>';
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 6;
+      td.className = "muted";
+      td.textContent = "hesap yok — Davet sekmesinden ac.";
+      tr.appendChild(td);
+      tb.appendChild(tr);
       return;
     }
-    tb.innerHTML = "";
     for (const r of rows) {
       const tr = document.createElement("tr");
-      const badge = r.suspended
-        ? '<span class="badge err">durduruldu</span>'
-        : r.low_balance
-          ? '<span class="badge warn">dusuk</span>'
-          : '<span class="badge ok">acik</span>';
-      tr.innerHTML =
-        "<td></td><td class='num'></td><td class='num'></td><td class='num'></td><td></td><td></td>";
-      tr.children[0].textContent = r.username;
-      tr.children[1].textContent = tl(r.balance_krs);
-      tr.children[2].textContent = r.usage_home_secs;
-      tr.children[3].textContent = r.usage_fb_secs;
-      tr.children[4].innerHTML = badge;
+      const cUser = document.createElement("td");
+      cUser.textContent = r.username;
+      const cBal = document.createElement("td");
+      cBal.className = "num";
+      cBal.textContent = tl(r.balance_krs);
+      const cHome = document.createElement("td");
+      cHome.className = "num";
+      cHome.textContent = r.usage_home_secs;
+      const cFb = document.createElement("td");
+      cFb.className = "num";
+      cFb.textContent = r.usage_fb_secs;
+      const cState = document.createElement("td");
+      const badge = document.createElement("span");
+      if (r.suspended) {
+        badge.className = "badge err";
+        badge.textContent = "durduruldu";
+      } else if (r.low_balance) {
+        badge.className = "badge warn";
+        badge.textContent = "dusuk";
+      } else {
+        badge.className = "badge ok";
+        badge.textContent = "acik";
+      }
+      cState.appendChild(badge);
+      const cAct = document.createElement("td");
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "ghost";
       btn.textContent = "Ac";
       btn.addEventListener("click", () => openDetail(r.username));
-      tr.children[5].appendChild(btn);
+      cAct.appendChild(btn);
+      tr.append(cUser, cBal, cHome, cFb, cState, cAct);
       tb.appendChild(tr);
     }
     say("");
@@ -351,7 +371,7 @@ $("auditbtn").addEventListener("click", async () => {
   try {
     const v = await invoke("admin_audit");
     const list = $("auditlist");
-    list.innerHTML = "";
+    list.textContent = "";
     const rows = (v.entries || []).slice().reverse();
     if (!rows.length) list.textContent = "kayit yok";
     for (const e of rows.slice(0, 200)) {

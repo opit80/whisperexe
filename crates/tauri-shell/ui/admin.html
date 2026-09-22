@@ -1,9 +1,12 @@
 <!DOCTYPE html>
 <!--
-  whisperexe yonetim (broker paneli).
-  Intent:     ev sahibi: hesap ac, bakiye yukle, hatti gor — tek bakista durum.
-  Hierarchy:  kullanici tablosu odakta; sol serit sekmeler; tehlike isleri inline.
+  whisperexe yonetim (broker paneli). Kimlik: KOMUTA MASASI.
+  Intent:     ev sahibi: hesaplari tek bakista gor, daveti yuz yuze ver,
+              hatti ve tarifeyi korkmadan degistir.
+  Hierarchy:  durum cubugu > hesap tablosu (odak) > secili hesap karti
+              (islemler + ayri tehlike bolgesi) > davet kodu karti > hat/tarife.
   Not:        anahtar degerleri EKRANA HIC YAZILMAZ (yalnizca VAR/YOK noktasi).
+              Surucu ./admin.js (harici; CSP script-src 'self'). Tum id'ler korunur.
 -->
 <html lang="tr">
 <head>
@@ -11,9 +14,8 @@
 <link rel="stylesheet" href="./app.css" />
 <style>
   body { padding: 20px; }
-  .wrap { display: flex; flex-direction: column; gap: 16px; max-width: 960px; margin: 0 auto; }
-  header.top { display: flex; align-items: center; gap: 10px; }
-  .shell { display: grid; grid-template-columns: 168px 1fr; gap: 16px; align-items: start; }
+  .wrap { display: flex; flex-direction: column; gap: 16px; max-width: 1020px; margin: 0 auto; }
+  .shell { display: grid; grid-template-columns: 172px 1fr; gap: 16px; align-items: start; }
   nav.rail { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 20px; }
   nav.rail button { text-align: left; }
   nav.rail button.on { border-color: var(--accent); color: var(--ink); }
@@ -22,27 +24,31 @@
   form.grid { display: flex; flex-direction: column; gap: 10px; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-  #codebig {
-    font-size: 28px; font-weight: 600; letter-spacing: 0.02em;
-    font-variant-numeric: tabular-nums; user-select: all;
+  .pane-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .pane-head h2 { margin: 0; }
+  .pane-head .grow { flex: 1; }
+  .cur { font-size: 13px; margin-bottom: 12px; }
+  @media (max-width: 760px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.rail { position: static; flex-direction: row; flex-wrap: wrap; }
+    nav.rail button { flex: 1 1 auto; }
+    .two, .three { grid-template-columns: 1fr; }
   }
-  .audit { font-size: 12px; max-height: 320px; overflow: auto; }
-  .audit div { padding: 3px 0; border-bottom: 1px solid var(--edge); }
-  .keydot { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header class="top">
-    <span class="dot idle" id="adot"></span>
+  <header class="statusbar">
+    <span class="mark" aria-hidden="true"><span class="dot idle" id="adot"></span></span>
     <div class="grow">
-      <div style="font-weight:600">whisperexe yönetim</div>
-      <div class="faint" style="font-size:12px" id="asub">kilitli</div>
+      <div class="apptitle">whisperexe yönetim</div>
+      <div class="faint sub" id="asub">kilitli</div>
     </div>
     <button class="ghost" id="logoutbtn" type="button" hidden>Çıkış</button>
   </header>
 
   <section class="panel" id="gate">
+    <div class="eyebrow" style="margin-bottom:8px">kilitli kasa</div>
     <h2>Admin girişi</h2>
     <form class="grid" id="gateform">
       <div>
@@ -68,8 +74,9 @@
 
       <section class="pane on" id="pane-accounts">
         <div class="panel">
-          <div class="row" style="margin-bottom:12px">
-            <h2 class="grow">Hesaplar</h2>
+          <div class="pane-head">
+            <h2>Hesaplar</h2>
+            <span class="grow"></span>
             <button type="button" id="usersbtn">Tazele</button>
           </div>
           <table class="grid" id="userstable">
@@ -78,7 +85,9 @@
           </table>
         </div>
         <div class="panel" id="detail" hidden>
+          <div class="eyebrow" style="margin-bottom:4px">seçili hesap</div>
           <h2 id="dname">—</h2>
+          <div class="muted" style="font-size:12px; margin-bottom:12px" id="dmeta">—</div>
           <div class="two">
             <form class="grid" id="topupform">
               <div>
@@ -98,14 +107,17 @@
           <div class="row" style="margin-top:12px; flex-wrap:wrap">
             <button type="button" id="homeonlybtn">Sadece-ev: aç/kapat</button>
             <button type="button" id="hwidbtn">HWID sıfırla</button>
+          </div>
+          <div class="danger-zone" style="margin-top:12px">
+            <span class="dz-label">tehlike bölgesi</span>
             <button type="button" id="suspendbtn" class="danger">Durdur / aç</button>
           </div>
-          <div class="muted" style="font-size:12px; margin-top:8px" id="dmeta">—</div>
         </div>
       </section>
 
       <section class="pane" id="pane-invite">
         <div class="panel">
+          <div class="eyebrow" style="margin-bottom:8px">yeni hesap</div>
           <h2>Davet aç</h2>
           <form class="grid" id="inviteform">
             <div class="two">
@@ -124,8 +136,8 @@
             </div>
             <div><button class="primary" type="submit">Davet üret</button></div>
           </form>
-          <div style="margin-top:16px" id="codewrap" hidden>
-            <div class="eyebrow">kodu yüz yüze ver</div>
+          <div class="codecard" id="codewrap" hidden>
+            <div class="eyebrow">kodu yüz yüze ver · tek kullanımlık · 7 gün</div>
             <div id="codebig">—</div>
           </div>
         </div>
@@ -133,11 +145,12 @@
 
       <section class="pane" id="pane-tariffs">
         <div class="panel">
-          <div class="row" style="margin-bottom:12px">
-            <h2 class="grow">Tarifeler</h2>
+          <div class="pane-head">
+            <h2>Tarifeler</h2>
+            <span class="grow"></span>
             <button type="button" id="tariffsbtn">Tazele</button>
           </div>
-          <div class="muted" style="font-size:13px; margin-bottom:12px" id="tariffcur">—</div>
+          <div class="muted cur num" id="tariffcur">—</div>
           <form class="grid" id="tariffform">
             <div class="three">
               <div>
@@ -155,16 +168,18 @@
             </div>
             <div><button type="submit">Tarifeyi değiştir</button></div>
           </form>
+          <p class="hint muted" style="font-size:12px; margin:12px 0 0">Yeni tarife sonraki isteklere uygulanır; sürmekte olan iş eski fiyattan biter.</p>
         </div>
       </section>
 
       <section class="pane" id="pane-fallback">
         <div class="panel">
-          <div class="row" style="margin-bottom:12px">
-            <h2 class="grow">Fallback hattı</h2>
+          <div class="pane-head">
+            <h2>Fallback hattı</h2>
+            <span class="grow"></span>
             <button type="button" id="vendorbtn">Tazele</button>
           </div>
-          <div class="muted" style="font-size:13px; margin-bottom:12px" id="vendorcur">—</div>
+          <div class="muted cur num" id="vendorcur">—</div>
           <div class="row" style="flex-wrap:wrap">
             <button type="button" id="swbtn">Şalter: aç/kapat</button>
             <button type="button" id="vgroq">Hat: Groq</button>
@@ -172,7 +187,8 @@
           </div>
         </div>
         <div class="panel">
-          <h2>Hat fiyatı + taban</h2>
+          <div class="eyebrow" style="margin-bottom:8px">hat fiyatı + taban</div>
+          <h2>Hat ayarı</h2>
           <form class="grid" id="vpriceform">
             <div class="three">
               <div>
@@ -201,6 +217,7 @@
           </form>
         </div>
         <div class="panel">
+          <div class="eyebrow" style="margin-bottom:8px">yalnızca broker belleği</div>
           <h2>Sağlayıcı anahtarları</h2>
           <div class="muted" style="font-size:13px; margin-bottom:12px">Değerler yalnızca broker belleğinde durur; ekrana ve kayda yazılmaz.</div>
           <div class="two">
@@ -232,21 +249,24 @@
 
       <section class="pane" id="pane-audit">
         <div class="panel">
-          <div class="row" style="margin-bottom:12px">
-            <h2 class="grow">Denetim</h2>
+          <div class="pane-head">
+            <h2>Denetim</h2>
+            <span class="grow"></span>
             <button type="button" id="auditbtn">Tazele</button>
           </div>
-          <div class="audit" id="auditlist">—</div>
+          <div class="audit num" id="auditlist">—</div>
         </div>
       </section>
 
       <section class="pane" id="pane-disks">
         <div class="panel">
-          <div class="row" style="margin-bottom:12px">
-            <h2 class="grow">Diskler</h2>
+          <div class="pane-head">
+            <h2>Diskler</h2>
+            <span class="grow"></span>
             <button type="button" id="disksbtn">Tazele</button>
           </div>
-          <div id="diskscur" class="muted" style="font-size:13px">—</div>
+          <div id="diskscur" class="muted num" style="font-size:13px">—</div>
+          <p class="hint muted" style="font-size:12px; margin:12px 0 0">%80 dolulukta uyarı verir; silme yoktur, KVKK silme panelden hard-delete ile yapılır.</p>
         </div>
       </section>
     </div>

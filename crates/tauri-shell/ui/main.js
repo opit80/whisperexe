@@ -143,4 +143,17 @@ $("adminbtn").addEventListener("click", async () => {
   }
 });
 
+// Sekmeler (yalnizca gorunum; giris/davet mantigi degismez).
+function selectTab(which) {
+  const login = which !== "redeem";
+  $("tab-login").hidden = !login;
+  $("tab-redeem").hidden = login;
+  $("tabbtn-login").classList.toggle("on", login);
+  $("tabbtn-redeem").classList.toggle("on", !login);
+  $("tabbtn-login").setAttribute("aria-selected", String(login));
+  $("tabbtn-redeem").setAttribute("aria-selected", String(!login));
+}
+$("tabbtn-login").addEventListener("click", () => selectTab("login"));
+$("tabbtn-redeem").addEventListener("click", () => selectTab("redeem"));
+
 refreshBroker().then(refreshStatus);
