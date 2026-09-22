@@ -339,7 +339,7 @@ $("adm-topupform").addEventListener("submit", async (ev) => {
   try {
     const v = await invoke("admin_topup", {
       username: admDetailUser,
-      amount_krs,
+      amountKrs: amount_krs,
     });
     $("adm-tp-amt").value = "";
     admSay(admDetailUser + " yeni bakiye " + tl(v.balance_krs) + ".", "ok");
@@ -359,9 +359,9 @@ $("adm-capform").addEventListener("submit", async (ev) => {
   try {
     await invoke("admin_limits", {
       username: admDetailUser,
-      daily_home: null, daily_fb: null, monthly_home: null, monthly_fb: null,
-      fb_cap,
-      home_only: null,
+      dailyHome: null, dailyFb: null, monthlyHome: null, monthlyFb: null,
+      fbCap: fb_cap,
+      homeOnly: null,
     });
     $("adm-cp-cap").value = "";
     admSay("Tavan yazıldı.", "ok");
@@ -374,7 +374,7 @@ $("adm-homeonlybtn").addEventListener("click", async () => {
   if (!admDetailUser) return;
   try {
     const cur = await invoke("admin_user", { username: admDetailUser });
-    await invoke("admin_home_only", { username: admDetailUser, home_only: !cur.home_only });
+    await invoke("admin_home_only", { username: admDetailUser, homeOnly: !cur.home_only });
     admSay("Sadece-ev " + (!cur.home_only ? "açıldı." : "kapatıldı."), "ok");
     admOpenDetail(admDetailUser);
   } catch (e) {
@@ -414,7 +414,7 @@ $("adm-inviteform").addEventListener("submit", async (ev) => {
   try {
     const v = await invoke("admin_invite", {
       username: $("adm-iv-user").value.trim(),
-      opening_krs,
+      openingKrs: opening_krs,
       code: $("adm-iv-code").value.trim() === "" ? null : $("adm-iv-code").value.trim(),
     });
     $("adm-codewrap").hidden = false;
@@ -453,9 +453,9 @@ $("adm-tariffform").addEventListener("submit", async (ev) => {
   if (bp !== "" && !Number.isSafeInteger(fallback_bp)) { admSay("Hata: carpan-gecersiz", "err"); return; }
   try {
     await invoke("admin_set_tariff", {
-      home_krs_per_min,
-      fallback_fixed,
-      fallback_bp,
+      homeKrsPerMin: home_krs_per_min,
+      fallbackFixed: fallback_fixed,
+      fallbackBp: fallback_bp,
     });
     admSay("Tarife sonraki isteklere uygulanır.", "ok");
     admLoadTariffs();
