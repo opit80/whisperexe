@@ -82,6 +82,8 @@ pub fn quantum_cost_kurus(line: Line, tariff: &Tariff) -> u64 {
 pub enum Kind {
     /// Admin yüklemesi (+bakiye).
     Topup,
+    /// Admin düşürmesi (−bakiye; eksiye düşürmez).
+    Deduct,
     /// Senkron ön-bloke: ölçülen tutar bakiyeden düşmüş görünür (−bakiye).
     Block,
     /// Kesinleştirme (tasfiye): YALNIZCA bloke içinden düşer, delta 0'dır
@@ -161,6 +163,7 @@ impl Ledger {
             .filter(|e| e.account == account)
             .map(|e| match e.kind {
                 Kind::Topup => e.amount_kurus as i64,
+                Kind::Deduct => -(e.amount_kurus as i64),
                 Kind::Block => -(e.amount_kurus as i64),
                 Kind::Release => e.amount_kurus as i64,
                 Kind::Settle => 0,
@@ -177,7 +180,7 @@ impl Ledger {
                 Kind::Block => b += e.amount_kurus,
                 Kind::Settle => s += e.amount_kurus,
                 Kind::Release => r += e.amount_kurus,
-                Kind::Topup => {}
+                Kind::Topup | Kind::Deduct => {}
             }
         }
         b.saturating_sub(s).saturating_sub(r)
@@ -221,6 +224,41 @@ impl Ledger {
             tariff_version: 0,
             measured_secs: 0.0,
             kind: Kind::Topup,
+            amount_kurus,
+            note: note.into(),
+        });
+        Ok(seq)
+    }
+
+    /// Admin düşürmesi: bakiye eksiye düşmez, yetersizse ret (ücret satırı YOK,
+    /// yalnızca başarılı düşürme yeni `Deduct` satırı yazar).
+    pub fn deduct(
+        &mut self,
+        at_secs: u64,
+        account: &str,
+        amount_kurus: u64,
+        note: &str,
+    ) -> Result<u64, LedgerError> {
+        if amount_kurus == 0 {
+            return Err(LedgerError::InvalidAmount);
+        }
+        let have = self.balance(account);
+        if have < amount_kurus as i64 {
+            return Err(LedgerError::InsufficientBalance {
+                have_kurus: have,
+                need_kurus: amount_kurus,
+            });
+        }
+        let seq = self.next_seq();
+        self.push(Entry {
+            seq,
+            at_secs,
+            account: account.into(),
+            request_id: String::new(),
+            line: Line::Home,
+            tariff_version: 0,
+            measured_secs: 0.0,
+            kind: Kind::Deduct,
             amount_kurus,
             note: note.into(),
         });

@@ -74,6 +74,7 @@ pub enum AccountError {
     HwidMismatch,
     WeakPassword,
     BadOpeningBalance,
+    InsufficientBalance,
 }
 
 impl std::fmt::Display for AccountError {

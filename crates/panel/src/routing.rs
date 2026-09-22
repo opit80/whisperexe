@@ -7,7 +7,7 @@
 //!   harcama tavanları (hat bazında).
 
 use crate::accounts::{Account, AccountError};
-use crate::tariffs::Line;
+use crate::tariffs::{FallbackVendor, Line};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,7 @@ const MONTH_WINDOW_SECS: u64 = 30 * DAY_SECS; // haddelenmiş 30 gün penceresi
 
 /// Yeni istek kabul kapısı: şalter + sadece-ev + tavan kontrolleri.
 /// Başarılıysa `Ok(())`; ret her zaman ücretsizdir (ücret yazılmaz).
+/// Geriye uyumluluk için varsayılan hat Groq'tur (ücretli fallback).
 pub fn admit(
     acc: &Account,
     line: Line,
@@ -62,15 +63,34 @@ pub fn admit(
     spend: &[SpendEntry],
     now: u64,
 ) -> Result<(), RouteError> {
+    admit_with_vendor(acc, line, cost_krs, switch, spend, now, FallbackVendor::Groq)
+}
+
+/// Hat-bazlı kabul kapısı: aktif hat local ise fallback isteği ücretsiz
+/// ev/local modele düşer; şalter kapalıyken ve sadece-ev modunda bile
+/// local çalışmaya devam eder (tavanlar hariç, onlar hatta bakılmaksızın
+/// uygulanır). Ücretli hatlarda (groq/openai) davranış değişmez.
+pub fn admit_with_vendor(
+    acc: &Account,
+    line: Line,
+    cost_krs: i64,
+    switch: &FallbackSwitch,
+    spend: &[SpendEntry],
+    now: u64,
+    vendor: FallbackVendor,
+) -> Result<(), RouteError> {
     if acc.suspended {
         return Err(RouteError::Maintenance("hesap durduruldu"));
     }
     if line == Line::Fallback {
-        if !switch.open {
-            return Err(RouteError::Maintenance("fallback bakimda"));
-        }
-        if acc.home_only {
-            return Err(RouteError::Maintenance("hesap sadece-ev modunda"));
+        let local = vendor == FallbackVendor::Local;
+        if !local {
+            if !switch.open {
+                return Err(RouteError::Maintenance("fallback bakimda"));
+            }
+            if acc.home_only {
+                return Err(RouteError::Maintenance("hesap sadece-ev modunda"));
+            }
         }
         if let Some(cap) = acc.fallback_daily_cap_krs {
             let used: i64 = spend
@@ -141,6 +161,24 @@ mod tests {
         assert!(admit(&acc, Line::Home, 500, &closed, &[], 100).is_ok());
         // Şalter açıkken fallback geçer.
         assert!(admit(&acc, Line::Fallback, 500, &FallbackSwitch::default(), &[], 100).is_ok());
+    }
+
+    #[test]
+    fn local_vendor_bypasses_switch_and_home_only() {
+        let mut s = AccountStore::default();
+        let mut acc = acc_with(&mut s);
+        acc.home_only = true;
+        let closed = FallbackSwitch { open: false };
+        // Ücretli hat: şalter kapalıyken + sadece-ev'de ret.
+        assert!(admit(&acc, Line::Fallback, 500, &closed, &[], 100).is_err());
+        // Local hat (sabit 0, ücretsiz): şalter kapalıyken de sadece-ev'de de geçer.
+        assert!(admit_with_vendor(&acc, Line::Fallback, 0, &closed, &[], 100, FallbackVendor::Local).is_ok());
+        assert!(admit_with_vendor(
+            &acc, Line::Fallback, 0, &FallbackSwitch::default(), &[], 100, FallbackVendor::Local
+        ).is_ok());
+        // Groq/OpenAI davranışı değişmedi.
+        assert!(admit_with_vendor(&acc, Line::Fallback, 500, &closed, &[], 100, FallbackVendor::Groq).is_err());
+        assert!(admit_with_vendor(&acc, Line::Fallback, 500, &closed, &[], 100, FallbackVendor::OpenAi).is_err());
     }
 
     #[test]

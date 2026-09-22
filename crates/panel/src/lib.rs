@@ -20,7 +20,7 @@ use admin::AdminAuth;
 use api::{AuditLog, ROUTES};
 use feed::{FeedState, Release, UpdateCheck};
 use retention::{DiskKind, DiskMonitor, DiskStatus, HardDeleteReport};
-use routing::{admit, FallbackSwitch, RouteError, SpendEntry};
+use routing::{FallbackSwitch, RouteError, SpendEntry};
 use serde::{Deserialize, Serialize};
 use tariffs::{FallbackPrice, FallbackVendor, Line, Quote, Tariff, TariffTable};
 use users::{HwidResetEntry, HwidResetLog, UserRow};
@@ -62,18 +62,25 @@ pub struct ProviderSecrets {
 
 impl ProviderSecrets {
     /// Yalnızca VAR/YOK bilgisi dışarı verilir, değer asla.
+    /// Local hat sır gerektirmez: her zaman hazır (true).
     pub fn has(&self, vendor: FallbackVendor) -> bool {
         match vendor {
             FallbackVendor::Groq => self.groq_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false),
             FallbackVendor::OpenAi => self.openai_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false),
+            FallbackVendor::Local => true,
         }
     }
 
     fn set(&mut self, vendor: FallbackVendor, key: &str) {
+        // Local sır tutmaz (boş anahtar local'i etkilemez).
+        if vendor == FallbackVendor::Local {
+            return;
+        }
         let v = if key.is_empty() { None } else { Some(key.to_string()) };
         match vendor {
             FallbackVendor::Groq => self.groq_key = v,
             FallbackVendor::OpenAi => self.openai_key = v,
+            FallbackVendor::Local => {}
         }
     }
 }
@@ -114,6 +121,13 @@ impl PanelState {
         let acc = self.accounts.get_mut(username).ok_or(AccountError::AccountNotFound)?;
         let b = users::top_up(acc, amount_krs)?;
         self.audit.record(now, admin, "bakiye-ekle", &format!("{} +{} -> {}", username, amount_krs, b));
+        Ok(b)
+    }
+
+    pub fn deduct(&mut self, admin: &str, username: &str, amount_krs: i64, now: u64) -> Result<i64, AccountError> {
+        let acc = self.accounts.get_mut(username).ok_or(AccountError::AccountNotFound)?;
+        let b = users::deduct(acc, amount_krs)?;
+        self.audit.record(now, admin, "bakiye-dusur", &format!("{} -{} -> {}", username, amount_krs, b));
         Ok(b)
     }
 
@@ -226,9 +240,10 @@ impl PanelState {
     }
 
     /// Sağlayıcı anahtarını panele girer (bellek-içi; değer loga YAZILMAZ).
-    /// Boş anahtar = temizleme ile aynıdır.
+    /// Boş anahtar = temizleme ile aynıdır. Local sır tutmaz: her zaman
+    /// hazır döner, boş anahtar local'i etkilemez.
     pub fn set_provider_key(&mut self, admin: &str, vendor: FallbackVendor, key: &str, now: u64) -> bool {
-        let stored = !key.is_empty();
+        let stored = if vendor == FallbackVendor::Local { true } else { !key.is_empty() };
         self.secrets.set(vendor, key);
         self.audit.record(now, admin, if stored { "anahtar-giris" } else { "anahtar-sil" }, vendor.name());
         stored
@@ -240,14 +255,17 @@ impl PanelState {
     }
 
     /// Yeni istek kabul kapısı (ücretsiz retler burada; ücret yazılmaz).
+    /// Aktif hat local ise fallback isteği local'e düşer (şalter kapalı
+    /// olsa bile ücretsiz devam eder).
     pub fn admit(&self, username: &str, line: Line, measured_secs: u64, now: u64) -> Result<Quote, RouteError> {
         let acc = self.accounts.get(username).ok_or(RouteError::Maintenance("hesap"))?;
         let q = self.tariff().quote(line, measured_secs);
+        let vendor = self.tariffs.as_ref().map(|t| t.vendor()).unwrap_or(FallbackVendor::Groq);
         let user_spend: Vec<SpendEntry> = Vec::new(); // hesap-bazlı süzme broker defterinden beslenir
         let _ = &user_spend;
         // Not: spend defteri broker'da tutulur; burada hesap-içi günlük takibi
         // için `self.spend` süzülür (aşağıda). İmza basitliği için doğrudan:
-        admit(acc, line, q.cost_krs, &self.switch, &self.spend_filtered(username, now), now)?;
+        routing::admit_with_vendor(acc, line, q.cost_krs, &self.switch, &self.spend_filtered(username, now), now, vendor)?;
         Ok(q)
     }
 
@@ -412,6 +430,26 @@ mod tests {
         s.finalize("ali", &inflight, 13).unwrap();
         assert_eq!(s.accounts.get("ali").unwrap().balance_krs, 10_000 - cost);
         assert!(s.audit.entries.iter().any(|e| e.action == "acil-salter"));
+    }
+
+    #[test]
+    fn local_hat_salter_kapaliyken_calisir_ucretsiz() {
+        let mut s = state();
+        ali(&mut s);
+        // Ücretli hatta şalter kapanınca fallback ret.
+        s.set_switch("admin", false, 10);
+        assert_eq!(
+            s.admit("ali", Line::Fallback, 60, 11),
+            Err(RouteError::Maintenance("fallback bakimda"))
+        );
+        // Yönetimden local hatta geç: şalter kapalı olsa bile ücretsiz devam.
+        s.set_vendor("admin", FallbackVendor::Local, 12);
+        let q = s.admit("ali", Line::Fallback, 60, 13).unwrap();
+        assert_eq!(q.cost_krs, 0);
+        // Boş anahtar local'i etkilemez; secretsiz hazır.
+        assert!(s.set_provider_key("admin", FallbackVendor::Local, "", 14));
+        assert!(s.secrets.has(FallbackVendor::Local));
+        assert!(s.audit.entries.iter().any(|e| e.action == "hat-secimi" && e.detail == "local"));
     }
 
     #[test]

@@ -35,6 +35,7 @@
 //! - Gerçek mikrofon yoksa `MockEncoder` yolu korunur (mock kayıt yolu).
 
 pub mod flow;
+pub mod hotkey;
 #[cfg(feature = "tauri")]
 pub mod commands;
 #[cfg(feature = "tauri")]

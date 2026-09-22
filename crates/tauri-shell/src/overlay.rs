@@ -38,6 +38,14 @@ pub struct BalanceBadge {
     pub minutes_left: f64,
 }
 
+/// Pencere görünürlük kuralı (client-ui semantiği): rozet/toast `Hidden`
+/// üstünde de taşınır; pencere YALNIZCA durum `hidden` VE toast VE rozet
+/// yokken gizlenir. `show` SADECE bu kural `true` iken çağrılır, `hide`
+/// SADECE `false` iken — arada hayalet pencere kalmaz.
+pub fn is_visible(view: &OverlayView) -> bool {
+    view.state != "hidden" || view.toast.is_some() || view.low_balance.is_some()
+}
+
 pub fn render(ui: &client_ui::UiState) -> OverlayView {
     use client_ui::Overlay;
     let (state, secs, low_mic, queue) = match &ui.overlay {
@@ -121,5 +129,46 @@ mod tests {
         s.on(UiEvent::UpdatePending);
         assert_eq!(render(&s).state, "update-pending");
         let _ = Overlay::Hidden;
+    }
+
+    #[test]
+    fn visibility_rule_leaves_no_ghost() {
+        // hidden + toast yok + rozet yok = gizle (hayalet YOK).
+        let mut s = UiState::new(false);
+        let v = render(&s);
+        assert_eq!(v.state, "hidden");
+        assert!(!is_visible(&v));
+        // Toast taşınırken pencere görünür (boş hap değil, bilgi var).
+        s.on(UiEvent::Toast {
+            text: "x".into(),
+            kind: client_ui::ToastKind::Warn,
+        });
+        assert!(is_visible(&render(&s)));
+        // Sessizlik: overlay hidden ama toast var -> görünür.
+        let mut s = UiState::new(false);
+        s.on(UiEvent::HotkeyDown);
+        s.on(UiEvent::RecordStopped {
+            secs: 0,
+            reason: client::record::StopReason::Silent,
+        });
+        let v = render(&s);
+        assert_eq!(v.state, "hidden");
+        assert!(v.toast.is_some());
+        assert!(is_visible(&v));
+        // Dismiss sonrası her şey temiz -> gizle.
+        s.on(UiEvent::Dismiss);
+        let v = render(&s);
+        assert!(!is_visible(&v));
+        // Done görünür; Done->Hidden akışı gizler.
+        let mut s = UiState::new(false);
+        s.on(UiEvent::HotkeyDown);
+        s.on(UiEvent::RecordStopped {
+            secs: 2,
+            reason: client::record::StopReason::Released,
+        });
+        s.on(UiEvent::ResultArrived);
+        assert!(is_visible(&render(&s)));
+        s.on(UiEvent::Dismiss);
+        assert!(!is_visible(&render(&s)));
     }
 }

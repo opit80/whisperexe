@@ -45,6 +45,7 @@
     font-variant-numeric: tabular-nums; user-select: all;
     color: var(--accent);
   }
+  #appver { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
   @media (max-width: 760px) {
     .shell { grid-template-columns: 1fr; }
     nav.rail { position: static; flex-direction: row; flex-wrap: wrap; }
@@ -58,7 +59,7 @@
   <header class="brand">
     <span class="mark" aria-hidden="true"><span class="dot idle" id="netdot"></span></span>
     <div class="grow">
-      <div class="apptitle">whisperexe</div>
+      <div class="apptitle">whisperexe <span class="faint num" id="appver"></span></div>
       <div class="faint sub" id="ver">broker'a bağlanıyor…</div>
     </div>
     <button class="ghost" id="adminbtn" type="button">Yönetim</button>
@@ -146,8 +147,31 @@
     <div style="margin-top:8px"><button type="button" class="ghost" id="updbtn">Güncelle</button></div>
   </section>
 
+  <section class="panel" aria-label="Kısayol">
+    <div class="eyebrow" style="margin-bottom:8px">kısayol</div>
+    <form class="grid" id="hkform">
+      <div>
+        <label class="f" for="hk-input">Bas-konuş tuşu (F1–F12)</label>
+        <input type="text" id="hk-input" value="F9" maxlength="4" spellcheck="false" autocomplete="off" />
+      </div>
+      <div class="row"><button class="primary" type="submit" id="hksave">Kaydet</button></div>
+    </form>
+    <div class="msg" id="hkmsg" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" aria-label="Ses">
+    <div class="eyebrow" style="margin-bottom:8px">ses</div>
+    <div class="row" style="flex-wrap:wrap">
+      <select id="miclist" aria-label="Mikrofon seç" style="flex:1 1 auto; min-width:180px"></select>
+      <button type="button" class="ghost" id="micrefresh">Yenile</button>
+      <button type="button" id="mictest">Test et</button>
+    </div>
+    <div class="hint muted num" id="miclevel" style="margin-top:8px" aria-live="polite"></div>
+    <div class="msg" id="micmsg" role="status" aria-live="polite"></div>
+  </section>
+
   <footer class="f9bar">
-    <kbd>F9</kbd><span class="hint muted">basılı tutarak konuş, bırakınca gönderilir.</span>
+    <kbd id="f9key">F9</kbd><span class="hint muted">basılı tutarak konuş, bırakınca gönderilir.</span>
   </footer>
     </div>
   </div>
@@ -205,6 +229,7 @@
           <h2 id="adm-dname">—</h2>
           <div class="muted" style="font-size:12px; margin-bottom:12px" id="adm-dmeta">—</div>
           <div class="two">
+            <div style="display:flex; flex-direction:column; gap:10px">
             <form class="grid" id="adm-topupform">
               <div>
                 <label class="f" for="adm-tp-amt">Bakiye ekle (kuruş)</label>
@@ -212,6 +237,14 @@
               </div>
               <div><button type="submit">Yükle</button></div>
             </form>
+            <form class="grid" id="adm-deductform">
+              <div>
+                <label class="f" for="adm-dc-amt">Bakiye düşür (kuruş)</label>
+                <input type="number" id="adm-dc-amt" min="1" step="1" />
+              </div>
+              <div><button type="submit">Düşür</button></div>
+            </form>
+            </div>
             <form class="grid" id="adm-capform">
               <div>
                 <label class="f" for="adm-cp-cap">Fallback günlük tavan (kuruş, boş = sınırsız)</label>
@@ -267,6 +300,7 @@
             <button type="button" id="adm-tariffsbtn">Tazele</button>
           </div>
           <div class="muted cur num" id="adm-tariffcur">—</div>
+          <div class="muted cur num" id="adm-localcur">local: 0,00 TL/dk · ücretsiz · anahtar gerekmez</div>
           <form class="grid" id="adm-tariffform">
             <div class="three">
               <div>
@@ -300,6 +334,7 @@
             <button type="button" id="adm-swbtn">Şalter: aç/kapat</button>
             <button type="button" id="adm-vgroq">Hat: Groq</button>
             <button type="button" id="adm-vopenai">Hat: OpenAI</button>
+            <button type="button" id="adm-vlocal">Hat: Local</button>
           </div>
         </div>
         <div class="panel">
@@ -309,7 +344,7 @@
             <div class="three">
               <div>
                 <label class="f" for="adm-vp-vendor">Hat</label>
-                <select id="adm-vp-vendor"><option value="groq">groq</option><option value="openai">openai</option></select>
+                <select id="adm-vp-vendor"><option value="groq">groq</option><option value="openai">openai</option><option value="local">local</option></select>
               </div>
               <div>
                 <label class="f" for="adm-vp-fixed">Sabit (kuruş/dk)</label>

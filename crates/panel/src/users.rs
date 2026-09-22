@@ -111,6 +111,18 @@ pub fn top_up(acc: &mut Account, amount_krs: i64) -> Result<i64, AccountError> {
     Ok(acc.balance_krs)
 }
 
+/// Bakiye düşür: sıfır/negatif reddedilir, bakiye eksiye düşmez.
+pub fn deduct(acc: &mut Account, amount_krs: i64) -> Result<i64, AccountError> {
+    if amount_krs <= 0 {
+        return Err(AccountError::BadOpeningBalance);
+    }
+    if acc.balance_krs < amount_krs {
+        return Err(AccountError::InsufficientBalance);
+    }
+    acc.balance_krs -= amount_krs;
+    Ok(acc.balance_krs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,6 +20,7 @@ const LABELS = {
 
 // Tauri: emit("overlay", OverlayView JSON). Kabuk tarafı render() çıktısı.
 function applyState(v) {
+  document.body.dataset.state = v.state;
   pill.dataset.state = v.state;
   dot.classList.toggle("pulse", !!v.pulse && !reduced);
   const m = Math.floor(v.secs / 60), s = v.secs % 60;

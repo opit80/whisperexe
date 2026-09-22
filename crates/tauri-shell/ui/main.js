@@ -81,6 +81,15 @@ async function refreshMe(quiet) {
   }
 }
 
+async function refreshAppVersion() {
+  try {
+    const v = await invoke("app_version");
+    if (v && v.version) $("appver").textContent = "v" + v.version;
+  } catch (e) {
+    // sessiz: rozet boş kalır, toast yok
+  }
+}
+
 async function refreshBroker() {
   try {
     const v = await invoke("broker_info");
@@ -350,6 +359,25 @@ $("adm-topupform").addEventListener("submit", async (ev) => {
   }
 });
 
+$("adm-deductform").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!admDetailUser) return;
+  const amount_krs = admInt($("adm-dc-amt").value, { min: 1 });
+  if (!Number.isSafeInteger(amount_krs)) { admSay("Hata: tutar-gecersiz", "err"); return; }
+  try {
+    const v = await invoke("admin_deduct", {
+      username: admDetailUser,
+      amountKrs: amount_krs,
+    });
+    $("adm-dc-amt").value = "";
+    admSay(admDetailUser + " yeni bakiye " + tl(v.balance_krs) + ".", "ok");
+    admLoadUsers();
+    admOpenDetail(admDetailUser);
+  } catch (e) {
+    admSay(fmtErr(e), "err");
+  }
+});
+
 $("adm-capform").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   if (!admDetailUser) return;
@@ -466,12 +494,16 @@ $("adm-tariffform").addEventListener("submit", async (ev) => {
 
 // ---- fallback ----
 function admPaintVendor(v) {
+  const localTaban = v.local ? v.local.upstream_min_secs : 3;
   $("adm-vendorcur").textContent =
     "hat " + v.vendor + " · v" + v.version +
     " · groq taban " + v.groq.upstream_min_secs + "sn" +
-    " · openai taban " + v.openai.upstream_min_secs + "sn";
+    " · openai taban " + v.openai.upstream_min_secs + "sn" +
+    " · local taban " + localTaban + "sn (ücretsiz)";
   $("adm-kgroq").className = "dot " + (v.groq.key_set ? "ok" : "idle");
   $("adm-kopenai").className = "dot " + (v.openai.key_set ? "ok" : "idle");
+  const lc = $("adm-localcur");
+  if (lc) lc.textContent = "local: 0,00 TL/dk · ücretsiz · anahtar gerekmez · taban " + localTaban + "sn";
 }
 
 async function admLoadVendor() {
@@ -511,6 +543,16 @@ $("adm-vopenai").addEventListener("click", async () => {
   try {
     await invoke("admin_set_vendor", { vendor: "openai" });
     admSay("Hat openai.", "ok");
+    admLoadVendor();
+  } catch (e) {
+    admSay(fmtErr(e), "err");
+  }
+});
+
+$("adm-vlocal").addEventListener("click", async () => {
+  try {
+    await invoke("admin_set_vendor", { vendor: "local" });
+    admSay("Hat local (ücretsiz).", "ok");
     admLoadVendor();
   } catch (e) {
     admSay(fmtErr(e), "err");
@@ -610,4 +652,158 @@ $("adm-disksbtn").addEventListener("click", async () => {
   }
 });
 
-refreshBroker().then(refreshStatus);
+// ---- kisayol (bas-konus tusu; Rust hotkey.json'da tutar) ----
+function paintHotkey(k) {
+  const key = typeof k === "string" && k ? k : "F9";
+  $("hk-input").value = key;
+  $("f9key").textContent = key;
+}
+
+async function loadHotkey() {
+  try {
+    const r = await invoke("hotkeyGet");
+    paintHotkey(r.hotkey);
+  } catch (e) {
+    paintHotkey("F9");
+  }
+}
+
+$("hkform").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("hksave").disabled = true;
+  try {
+    const r = await invoke("hotkeySet", { key: $("hk-input").value });
+    paintHotkey(r.hotkey);
+    $("hkmsg").textContent = "Kaydedildi (" + r.hotkey + ").";
+    $("hkmsg").className = "msg ok";
+  } catch (e) {
+    $("hkmsg").textContent = fmtErr(e);
+    $("hkmsg").className = "msg err";
+  } finally {
+    $("hksave").disabled = false;
+  }
+});
+
+// ---- ses paneli (mikrofon sec + seviye testi; F9 akisina dokunmaz) ----
+const MIC_KEY = "whisper_mic_id";
+const SILENCE_RMS = 0.015;
+const WARN_RMS = 0.03;
+
+function micSay(text, kind) {
+  const el = $("micmsg");
+  el.textContent = text || "";
+  el.className = "msg" + (kind ? " " + kind : "");
+}
+
+function micLevel(text) {
+  $("miclevel").textContent = text || "";
+}
+
+async function micList() {
+  const sel = $("miclist");
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+    sel.textContent = "";
+    micSay("Hata: mikrofon-izin-yok", "err");
+    return;
+  }
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devs.filter((d) => d.kind === "audioinput");
+    sel.textContent = "";
+    if (!inputs.length) {
+      micSay("Hata: mikrofon-izin-yok", "err");
+      return;
+    }
+    const saved = localStorage.getItem(MIC_KEY) || "";
+    let found = false;
+    inputs.forEach((d, i) => {
+      const o = document.createElement("option");
+      o.value = d.deviceId || "";
+      o.textContent = d.label || ("Mikrofon " + (i + 1));
+      if (saved && d.deviceId === saved) {
+        o.selected = true;
+        found = true;
+      }
+      sel.appendChild(o);
+    });
+    if (saved && !found && inputs[0].label) {
+      // Etiketler izinsiz bos gelir; izin sonrasi liste tazelenir.
+    }
+    const anyLabel = inputs.some((d) => d.label);
+    if (!anyLabel) micSay("Hata: mikrofon-izin-yok", "err");
+    else micSay("", "");
+  } catch (e) {
+    micSay("Hata: mikrofon-izin-yok", "err");
+  }
+}
+
+if ($("miclist")) {
+  $("miclist").addEventListener("change", (ev) => {
+    try {
+      localStorage.setItem(MIC_KEY, ev.target.value || "");
+    } catch (e) {
+      // sessiz: hatirlama zorunlu degil
+    }
+  });
+}
+if ($("micrefresh")) $("micrefresh").addEventListener("click", micList);
+
+if ($("mictest")) {
+  $("mictest").addEventListener("click", async () => {
+    micSay("");
+    micLevel("dinleniyor…");
+    $("mictest").disabled = true;
+    let stream = null;
+    let ctx = null;
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("no-mic");
+      }
+      const saved = localStorage.getItem(MIC_KEY) || "";
+      const selId = ($("miclist") && $("miclist").value) || saved || "";
+      const audio = selId ? { deviceId: { exact: selId } } : true;
+      stream = await navigator.mediaDevices.getUserMedia({ audio });
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const an = ctx.createAnalyser();
+      an.fftSize = 2048;
+      src.connect(an);
+      const buf = new Float32Array(an.fftSize);
+      let peak = 0;
+      const t0 = Date.now();
+      while (Date.now() - t0 < 3000) {
+        an.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        if (rms > peak) peak = rms;
+        micLevel("seviye: " + peak.toFixed(3));
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      if (peak < SILENCE_RMS) {
+        micSay("Ses duyulmuyor — mikrofonu/kazancı kontrol et (ucret yok)", "warn");
+      } else if (peak < WARN_RMS) {
+        micSay("Ses düşük", "warn");
+      } else {
+        micSay("Mikrofon sağlam", "ok");
+      }
+      micLevel("seviye: " + peak.toFixed(3));
+    } catch (e) {
+      micSay("Hata: mikrofon-izin-yok", "err");
+      micLevel("");
+    } finally {
+      if (stream) {
+        stream.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
+      }
+      if (ctx) {
+        try { await ctx.close(); } catch (e) {}
+      }
+      $("mictest").disabled = false;
+      micList();
+    }
+  });
+}
+if ($("miclist")) micList();
+
+refreshAppVersion();
+refreshBroker().then(refreshStatus).then(loadHotkey);

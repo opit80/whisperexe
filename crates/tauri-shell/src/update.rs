@@ -15,6 +15,73 @@ pub const SETUP_DIRECT_URL: &str =
 /// İndirme tavanı: 100MB.
 pub const MAX_BYTES: usize = 100 * 1024 * 1024;
 
+/// Tauri updater açılış denetimi için uygulanan-besleme işareti.
+///
+/// İkili sürüm `0.1.0` sabittir (kurulum dosya adı değişmez); besleme sürümü
+/// (`vX.Y.Z` tag'i) ise ilerler. Updater `check()` bu yüzden her açılışta
+/// yenilik bulur — işaret olmasa her girişte yeniden kurulup yeniden
+/// başlatılır. Bu dosya (app-data dizininde) son kurulan/bilinen besleme
+/// sürümünü tutar:
+/// - dosya yoksa o anki besleme benimsenir (temiz kurulumda aynı kurulum
+///   yeniden indirilip kurulmaz; açılış duman testi korunur),
+/// - dosya varsa ve besleme daha yeniyse bekleyen güncelleme kurulur.
+pub const APPLIED_FILE_NAME: &str = "update-applied.json";
+
+/// İşaret dosyası yolu (oturum dosyasıyla aynı dizinde tutulur).
+pub fn applied_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join(APPLIED_FILE_NAME)
+}
+
+/// Kayıtlı besleme sürümü (yoksa/bozuksa `None` → arayan benimser).
+pub fn read_applied_version(dir: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(applied_path(dir)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let s = v.get("version")?.as_str()?;
+    let s = s.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// Besleme sürümünü işler (hata sessiz: fail-open, akış kesilmez).
+pub fn write_applied_version(dir: &std::path::Path, version: &str) {
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(
+        applied_path(dir),
+        serde_json::json!({"version": version}).to_string(),
+    );
+}
+
+/// Besleme, kayıtlı sürümden daha mı yeni? (`v` öneki toleranslı.)
+pub fn feed_is_newer(feed: &str, applied: &str) -> bool {
+    cmp_tag(feed, applied) == std::cmp::Ordering::Greater
+}
+
+fn tag_parts(v: &str) -> Vec<u64> {
+    v.trim()
+        .trim_start_matches(['v', 'V'])
+        .split('.')
+        .map(|p| p.parse().unwrap_or(0))
+        .collect()
+}
+
+fn cmp_tag(a: &str, b: &str) -> std::cmp::Ordering {
+    let pa = tag_parts(a);
+    let pb = tag_parts(b);
+    let n = pa.len().max(pb.len());
+    for i in 0..n {
+        let x = pa.get(i).copied().unwrap_or(0);
+        let y = pb.get(i).copied().unwrap_or(0);
+        match x.cmp(&y) {
+            std::cmp::Ordering::Equal => continue,
+            o => return o,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
 /// `releases/latest` yanıtından kurulum dosyasını seç: (etiket, url).
 pub fn pick_setup_asset(meta: &serde_json::Value) -> Option<(String, String)> {
     let tag = meta.get("tag_name")?.as_str()?.to_string();
@@ -138,6 +205,36 @@ mod tests {
         let m = serde_json::json!({"tag_name": "v1", "assets": []});
         assert_eq!(pick_setup_asset(&m), None);
         assert_eq!(pick_setup_asset(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn besleme_isareti_yoksa_yoktur_yazinca_okunur() {
+        let dir = std::env::temp_dir().join(format!(
+            "whisperexe-test-isaret-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("saat")
+                .as_nanos()
+        ));
+        assert_eq!(read_applied_version(&dir), None);
+        write_applied_version(&dir, "v0.2.7");
+        assert_eq!(
+            read_applied_version(&dir),
+            Some("v0.2.7".to_string())
+        );
+        // Bozuk dosya fail-open: None (benimse), akış kesilmez.
+        std::fs::write(applied_path(&dir), "{bozuk").expect("yaz");
+        assert_eq!(read_applied_version(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn besleme_yeniligi_tag_karsilastirir() {
+        assert!(feed_is_newer("v0.2.7", "v0.2.6"));
+        assert!(feed_is_newer("0.2.7", "v0.2.6"));
+        assert!(!feed_is_newer("v0.2.6", "v0.2.6"));
+        assert!(!feed_is_newer("v0.2.6", "v0.2.7"));
+        assert!(feed_is_newer("v0.2.10", "v0.2.9"));
     }
 
     /// Canlı yol (ağ ister; varsayılan koşuda atlanır).

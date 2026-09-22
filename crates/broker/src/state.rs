@@ -156,6 +156,7 @@ fn panel_account_err(e: panel::accounts::AccountError) -> ApiError {
         E::BadPassword => ApiError::new(401, "bad_password", msg),
         E::NoFreeSlot | E::HwidMismatch => ApiError::new(403, "forbidden_hwid", msg),
         E::WeakPassword | E::BadOpeningBalance => ApiError::new(400, "weak_password", msg),
+        E::InsufficientBalance => ApiError::new(402, "insufficient_balance", msg),
     }
 }
 
@@ -360,6 +361,7 @@ impl BrokerState {
             };
             let kind = match e.kind {
                 ledger::Kind::Topup => "topup",
+                ledger::Kind::Deduct => "deduct",
                 ledger::Kind::Block => "block",
                 ledger::Kind::Settle => "settle",
                 ledger::Kind::Release => "release",
@@ -790,6 +792,19 @@ impl BrokerState {
         }))
     }
 
+    pub fn deduct(&mut self, username: &str, amount_krs: i64, now: u64) -> Result<Value, ApiError> {
+        if amount_krs <= 0 {
+            return Err(ApiError::new(400, "invalid_amount", "tutar pozitif olmali"));
+        }
+        self.panel.deduct("admin", username, amount_krs, now).map_err(panel_account_err)?;
+        self.ledger.deduct(now, username, amount_krs as u64, "admin dusurme").map_err(ledger_err)?;
+        self.persist_ledger();
+        Ok(json!({
+            "ok": true, "username": username,
+            "balance_krs": self.ledger.balance(username),
+        }))
+    }
+
     pub fn set_limits(&mut self, username: &str, v: &Value, now: u64) -> Result<Value, ApiError> {
         let cur = self.panel.accounts.get(username).cloned().ok_or_else(|| {
             ApiError::new(404, "account_not_found", "hesap bulunamadi")
@@ -920,17 +935,26 @@ impl BrokerState {
         }
     }
 
-    /// Aktif hat + iki hattın fiyat/tabanı + anahtar VAR/YOK (değer asla).
+    /// Aktif hat + üç hattın fiyat/tabanı + anahtar VAR/YOK (değer asla).
+    /// Local hat secretsizdir: key_set her zaman true, fiyat sabit 0.
     pub fn vendor_get(&self) -> Value {
         let tt = self.panel.tariffs.as_ref().map(|t| t.current());
-        let (vendor, g, o) = match self.panel.tariffs.as_ref() {
-            Some(t) => (t.vendor().name(), t.vendor_cfg(FallbackVendor::Groq), t.vendor_cfg(FallbackVendor::OpenAi)),
+        let (vendor, g, o, l) = match self.panel.tariffs.as_ref() {
+            Some(t) => (
+                t.vendor().name(),
+                t.vendor_cfg(FallbackVendor::Groq),
+                t.vendor_cfg(FallbackVendor::OpenAi),
+                t.vendor_cfg(FallbackVendor::Local),
+            ),
             None => ("groq", panel::tariffs::VendorCfg {
                 price: FallbackPrice::MultiplierBp(DEFAULT_FALLBACK_BP),
                 upstream_min_secs: panel::tariffs::DEFAULT_UPSTREAM_MIN_SECS,
             }, panel::tariffs::VendorCfg {
                 price: FallbackPrice::MultiplierBp(DEFAULT_FALLBACK_BP),
                 upstream_min_secs: panel::tariffs::OPENAI_UPSTREAM_MIN_SECS,
+            }, panel::tariffs::VendorCfg {
+                price: FallbackPrice::FixedKrsPerMin(0),
+                upstream_min_secs: panel::tariffs::LOCAL_UPSTREAM_MIN_SECS,
             }),
         };
         let (groq_key, openai_key) = self.panel.keys_set();
@@ -939,12 +963,13 @@ impl BrokerState {
             "version": tt.map(|t| t.version).unwrap_or(0),
             "groq": {"price": Self::fb_price_json(&g.price), "upstream_min_secs": g.upstream_min_secs, "key_set": groq_key},
             "openai": {"price": Self::fb_price_json(&o.price), "upstream_min_secs": o.upstream_min_secs, "key_set": openai_key},
+            "local": {"price": Self::fb_price_json(&l.price), "upstream_min_secs": l.upstream_min_secs, "key_set": true},
         })
     }
 
     fn parse_vendor(s: &str) -> Result<FallbackVendor, ApiError> {
         FallbackVendor::parse(s).ok_or_else(|| {
-            ApiError::new(400, "bad_vendor", "hat groq ya da openai olmali")
+            ApiError::new(400, "bad_vendor", "hat groq, openai ya da local olmali")
         })
     }
 
@@ -973,6 +998,18 @@ impl BrokerState {
     pub fn vendor_price(&mut self, v: &Value, now: u64) -> Result<Value, ApiError> {
         let vendor = v.get("vendor").and_then(|x| x.as_str()).unwrap_or("");
         let vv = Self::parse_vendor(vendor)?;
+        // Local hat ücretsizdir (sabit 0); ücretli fiyat yazılamaz.
+        if vv == FallbackVendor::Local {
+            let fixed = v.get("fixed_krs_per_min").and_then(|x| x.as_i64());
+            let bp = v.get("multiplier_bp").and_then(|x| x.as_u64());
+            let ok_zero = fixed == Some(0) && bp.is_none()
+                || fixed.is_none() && bp.is_none();
+            if !ok_zero {
+                return Err(ApiError::new(400, "invalid_amount", "local hat ucretsizdir (sabit 0)"));
+            }
+            let t = self.panel.set_vendor_price("admin", vv, FallbackPrice::FixedKrsPerMin(0), now);
+            return Ok(json!({"ok": true, "vendor": vv.name(), "version": t.version}));
+        }
         let price = Self::parse_price(v)?;
         let t = self.panel.set_vendor_price("admin", vv, price, now);
         Ok(json!({"ok": true, "vendor": vv.name(), "version": t.version}))
@@ -992,9 +1029,14 @@ impl BrokerState {
     }
 
     /// Sağlayıcı anahtarı gir (bellek-içi; yanıt/audit/loga değer YAZILMAZ).
+    /// Local secretsizdir: anahtar gerekmez, boş anahtar local'i etkilemez.
     pub fn key_set(&mut self, v: &Value, now: u64) -> Result<Value, ApiError> {
         let vendor = v.get("vendor").and_then(|x| x.as_str()).unwrap_or("");
         let vv = Self::parse_vendor(vendor)?;
+        if vv == FallbackVendor::Local {
+            self.panel.set_provider_key("admin", vv, "", now);
+            return Ok(json!({"ok": true, "vendor": vv.name(), "stored": true}));
+        }
         let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("");
         if key.len() > 2048 {
             return Err(ApiError::new(400, "bad_request", "anahtar en fazla 2048 karakter"));
@@ -1006,7 +1048,9 @@ impl BrokerState {
     pub fn key_clear(&mut self, vendor: &str, now: u64) -> Result<Value, ApiError> {
         let vv = Self::parse_vendor(vendor)?;
         self.panel.set_provider_key("admin", vv, "", now);
-        Ok(json!({"ok": true, "vendor": vv.name(), "stored": false}))
+        // Local secretsiz hazır kalır; temizleme etkilemez.
+        let stored = vv == FallbackVendor::Local;
+        Ok(json!({"ok": true, "vendor": vv.name(), "stored": stored}))
     }
 
     pub fn audit(&self, limit: usize) -> Value {
@@ -1254,6 +1298,35 @@ mod tests {
     }
 
     #[test]
+    fn local_vendor_free_secretsiz_auditli() {
+        let mut st = state("test-ledger-local.jsonl");
+        redeem_login(&mut st, 1000);
+        // Yönetimden local hatta geç: anahtar gerekmez.
+        let r = st.vendor_set("local", 1010).unwrap();
+        assert_eq!(r["vendor"], json!("local"));
+        let v = st.vendor_get();
+        assert_eq!(v["vendor"], json!("local"));
+        assert_eq!(v["local"]["key_set"], json!(true));
+        assert_eq!(v["local"]["price"], json!({"type": "fixed_krs_per_min", "value": 0}));
+        // Local fiyat ücretli yapılamaz; boş/0 kabul, diğerleri ret.
+        assert!(st.vendor_price(&json!({"vendor": "local", "fixed_krs_per_min": 900}), 1011).is_err());
+        assert!(st.vendor_price(&json!({"vendor": "local", "fixed_krs_per_min": 0}), 1012).is_ok());
+        // Boş anahtar local'i etkilemez (secretsiz hazır kalır).
+        let r = st.key_set(&json!({"vendor": "local"}), 1013).unwrap();
+        assert_eq!(r["stored"], json!(true));
+        let r = st.key_clear("local", 1014).unwrap();
+        assert_eq!(r["stored"], json!(true));
+        assert_eq!(st.vendor_get()["local"]["key_set"], json!(true));
+        // Groq/OpenAI akışı bozulmadı.
+        assert!(st.vendor_set("groq", 1015).is_ok());
+        assert_eq!(st.vendor_get()["vendor"], json!("groq"));
+        // Audit izi: hat-secimi local.
+        let audit = st.audit(50).to_string();
+        assert!(audit.contains("hat-secimi") && audit.contains("local"));
+        let _ = std::fs::remove_file("test-ledger-local.jsonl");
+    }
+
+    #[test]
     fn snapshot_survives_restart() {
         // Yeniden başlatma: admin kurulumu + davet + hesap kaybolmaz.
         let dir = std::env::temp_dir().join("whisperexe-broker-snap");
@@ -1281,5 +1354,45 @@ mod tests {
         assert!(!raw.contains("gizli-sifre-1"));
         let _ = std::fs::remove_file(&ledger);
         let _ = std::fs::remove_file(&snap);
+    }
+
+    #[test]
+    fn topup_deduct_guards() {
+        let mut st = state("test-ledger-topup-deduct.jsonl");
+        redeem_login(&mut st, 1000);
+        assert_eq!(st.ledger.balance("ali"), 10_000);
+        // Pozitif yükleme.
+        let v = st.topup("ali", 500, 1001).unwrap();
+        assert_eq!(v["balance_krs"], json!(10_500));
+        // Sıfır/negatif ret (yükleme ve düşürme).
+        assert_eq!(st.topup("ali", 0, 1002).unwrap_err().code, "invalid_amount");
+        assert_eq!(st.topup("ali", -5, 1002).unwrap_err().code, "invalid_amount");
+        assert_eq!(st.deduct("ali", 0, 1002).unwrap_err().code, "invalid_amount");
+        assert_eq!(st.deduct("ali", -5, 1002).unwrap_err().code, "invalid_amount");
+        // Pozitif düşürme + ayrı Deduct izi + admin audit izi.
+        let n_before = st.ledger.entries().len();
+        let v = st.deduct("ali", 1500, 1003).unwrap();
+        assert_eq!(v["balance_krs"], json!(9_000));
+        assert_eq!(st.ledger.entries().len(), n_before + 1);
+        assert!(matches!(
+            st.ledger.entries().last().map(|e| e.kind),
+            Some(ledger::Kind::Deduct)
+        ));
+        assert!(st.audit(50).to_string().contains("bakiye-dusur"));
+        // Yetersiz bakiye: 402 insufficient_balance, bakiye ve satır sayısı aynı.
+        let n_before = st.ledger.entries().len();
+        let err = st.deduct("ali", 9_001, 1004).unwrap_err();
+        assert_eq!(err.status, 402);
+        assert_eq!(err.code, "insufficient_balance");
+        assert_eq!(st.ledger.balance("ali"), 9_000);
+        assert_eq!(st.ledger.entries().len(), n_before);
+        // Tamamını düşürmek serbest, eksiye düşürmek yasak.
+        st.deduct("ali", 9_000, 1005).unwrap();
+        assert_eq!(st.ledger.balance("ali"), 0);
+        assert_eq!(st.deduct("ali", 1, 1006).unwrap_err().code, "insufficient_balance");
+        // Sır sızmaz: hata gövdesinde jeton/şifre yok.
+        let body = st.deduct("ali", 1, 1007).unwrap_err().body();
+        assert!(!body.contains("gizli-sifre-1"));
+        let _ = std::fs::remove_file("test-ledger-topup-deduct.jsonl");
     }
 }

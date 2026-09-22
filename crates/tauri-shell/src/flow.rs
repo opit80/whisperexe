@@ -1,12 +1,15 @@
 //! F9 → kayıt → overlay akışı.
 //!
 //! Tauri global-shortcut işleyicisi yalnızca şu iki çağrıyı yapar:
-//! `hotkey_down()` (F9 basıldı) ve `hotkey_up()` (F9 bırakıldı); aradaki
-//! her saniyelik PCM dilimi `push_second()` ile beslenir. Gerçek mikrofon
-//! yoksa `MockEncoder` yolu kullanılır (client core'daki mock kayıt yolu
-//! korunur; donanım geldiğinde `Encoder` arayüzüne bağlanır).
+//! `hotkey_down()` (kısayol basıldı) ve `hotkey_up()` (kısayol bırakıldı);
+//! aradaki her saniyelik PCM dilimi `push_second()` ile beslenir. Kısayol
+//! tuşu ayarlardan değişir (varsayılan F9); akış tuştan bağımsızdır.
+//! Gerçek mikrofon yoksa `MockEncoder` yolu kullanılır (client core'daki
+//! mock kayıt yolu korunur; donanım geldiğinde `Encoder` arayüzüne bağlanır).
 //!
 //! Kilitli kurallar:
+//! - Giriş kaydı ENGELLEMEZ: `hotkey_down` her zaman kayıt açar; giriş
+//!   yoksa gönderim yapılmaz, `giris-gerekli` toast'ı düşer (ücret YOK).
 //! - Sessizlik (konuşma öncesi): gönderme YOK, ücret YOK, ücretsiz toast.
 //! - 180sn tavan: istemcide kesilir (`Capped180`), gövde ~2MB altında.
 //! - Taban-altı engel: yeni kayıt AÇILMAZ; sürmekte olan iş bitirilir,
@@ -41,6 +44,10 @@ pub struct Shell {
     in_flight: bool,
     pending_update: bool,
     blocked_update: bool,
+    /// Giriş kaydı engellemez; yalnızca gönderim kapısıdır.
+    /// Varsayılan `true` (eski akış + testsiz kurulum kayıtsız çalışır);
+    /// Tauri tarafı oturuma göre [`Shell::set_logged_in`] ile besler.
+    logged_in: bool,
 }
 
 impl Shell {
@@ -53,7 +60,17 @@ impl Shell {
             in_flight: false,
             pending_update: false,
             blocked_update: false,
+            logged_in: true,
         }
+    }
+
+    /// Oturum kapısı (Tauri komutları giriş/çıkışta çağırır).
+    pub fn set_logged_in(&mut self, v: bool) {
+        self.logged_in = v;
+    }
+
+    pub fn logged_in(&self) -> bool {
+        self.logged_in
     }
 
     pub fn ui(&self) -> &UiState {
@@ -109,9 +126,10 @@ impl Shell {
         BootApply::VersionUnknown
     }
 
-    // ---- F9 (Tauri global-shortcut burayı çağırır) ----
+    // ---- kısayol (Tauri global-shortcut burayı çağırır) ----
 
-    /// F9 basıldı. Taban altıysa yeni kayıt AÇILMAZ (`false`).
+    /// Kısayol basıldı. Taban altıysa yeni kayıt AÇILMAZ (`false`).
+    /// Giriş kaydı ASLA engellemez (kayıt açılır; kapı gönderimdedir).
     pub fn hotkey_down(&mut self) -> bool {
         if self.blocked_update {
             // Girişte engel: kayıt açma, güncelleme toast'ı overlay'i çalmaz.
@@ -130,7 +148,9 @@ impl Shell {
         true
     }
 
-    /// F9 bırakıldı: oturumu kapat, gönderim kararı ver.
+    /// Kısayol bırakıldı: oturumu kapat, gönderim kararı ver.
+    /// Giriş yoksa gönderim YOK: kayıt çöpe atılır, `giris-gerekli`
+    /// toast'ı düşer (ücret YOK, hat meşgul EDİLMEZ).
     pub fn hotkey_up(&mut self) {
         let Some(s) = self.session.take() else { return };
         if self.pushes == 0 {
@@ -138,6 +158,19 @@ impl Shell {
             self.ui.on(UiEvent::RecordStopped {
                 secs: 0,
                 reason: StopReason::Silent,
+            });
+            self.in_flight = false;
+            return;
+        }
+        if !self.logged_in {
+            let _ = s.finish(true);
+            self.ui.on(UiEvent::RecordStopped {
+                secs: 0,
+                reason: StopReason::Silent,
+            });
+            self.ui.on(UiEvent::Toast {
+                text: "giris-gerekli: once giris yap, kaydin gonderilmedi.".into(),
+                kind: client_ui::ToastKind::Warn,
             });
             self.in_flight = false;
             return;
@@ -220,10 +253,12 @@ impl Shell {
         self.ui.on(UiEvent::Dismiss);
     }
 
-    /// F9 başka programda (kapanmadan devam: pencere çalışır, global tuş yok).
-    pub fn f9_unavailable(&mut self) {
+    /// Kısayol başka programda (kapanmadan devam: pencere çalışır,
+    /// global tuş yok). Metin ayarlanan tuşa göre dinamiktir.
+    pub fn hotkey_unavailable(&mut self, key: &str) {
+        let key = crate::hotkey::canonical(key).unwrap_or(crate::hotkey::DEFAULT_HOTKEY);
         self.ui.on(UiEvent::Toast {
-            text: "F9 baska programda; once onu kapat.".into(),
+            text: format!("{key} baska programda; once onu kapat."),
             kind: client_ui::ToastKind::Warn,
         });
     }
@@ -233,6 +268,16 @@ impl Shell {
         self.pending_update = false;
         if matches!(self.ui.overlay, Overlay::UpdatePending) {
             self.ui.on(UiEvent::Dismiss);
+        }
+    }
+
+    /// Açılış besleme denetimi yenilik buldu: bayrağı kur, overlay'i bilgilendir.
+    /// Engel (`UpdateBlocked`) üstüne yazılmaz; kayıt ortasında overlay çalınmaz
+    /// (client-ui kuralı: o sırada bilgi toast'ı düşer, iş bitince bayrak görünür).
+    pub fn note_update_available(&mut self) {
+        self.pending_update = true;
+        if !self.blocked_update {
+            self.ui.on(UiEvent::UpdatePending);
         }
     }
 }
@@ -400,6 +445,32 @@ mod tests {
     }
 
     #[test]
+    fn boot_note_marks_pending_without_stealing() {
+        // Açılış besleme denetimi yenilik buldu: bayrak kurulur, boşta
+        // overlay bilgi verir; engel üstüne yazılmaz.
+        let mut sh = Shell::new(false);
+        sh.note_update_available();
+        assert!(sh.update_due_at_restart());
+        assert_eq!(sh.ui.overlay, Overlay::UpdatePending);
+        // Engel varken bayrak kurulur ama engel overlay'i korunur.
+        let mut blocked = Shell::new(false);
+        let manifest = serde_json::to_string(&client::updater::Manifest {
+            version: "1.2.0".into(),
+            min_supported: "1.1.0".into(),
+            url: String::new(),
+            sha256_hex: String::new(),
+            signature_hex: String::new(),
+            mandatory: true,
+            notes: "kritik".into(),
+        })
+        .unwrap();
+        blocked.boot("1.0.5", &manifest).unwrap();
+        blocked.note_update_available();
+        assert!(blocked.update_due_at_restart());
+        assert_eq!(blocked.ui.overlay, Overlay::UpdateBlocked);
+    }
+
+    #[test]
     fn caps_at_180s_and_stays_under_body_limit() {
         let mut sh = Shell::new(false);
         sh.hotkey_down();
@@ -419,5 +490,49 @@ mod tests {
         // Gövde tavanı (~2MB) client core'da sabit; tam kayıt altında kalır.
         assert!(client::audio_enc::MAX_BODY_BYTES >= 2 * 1024 * 1024 - 1);
         assert_eq!(client::audio_enc::MAX_SECS, 180);
+    }
+
+    #[test]
+    fn hotkey_records_without_login_but_send_needs_login() {
+        // Arkadaş makinesi: giriş yokken kısayol kayda izinlidir;
+        // bırakınca gönderim YOK, `giris-gerekli` toast'ı düşer.
+        let mut sh = Shell::new(false);
+        sh.set_logged_in(false);
+        assert!(!sh.logged_in());
+        assert!(sh.hotkey_down());
+        assert!(matches!(sh.ui.overlay, Overlay::Recording { .. }));
+        let t = tone_1s();
+        sh.push_second(&t);
+        sh.hotkey_up();
+        assert!(!sh.recording());
+        assert!(!sh.in_flight());
+        assert_eq!(sh.ui.overlay, Overlay::Hidden);
+        let toast = sh.ui.toast.clone().expect("giris toast'i");
+        assert!(toast.text.contains("giris-gerekli"));
+        // Giriş gelince aynı akış gönderir.
+        sh.set_logged_in(true);
+        assert!(sh.hotkey_down());
+        sh.push_second(&tone_1s());
+        sh.hotkey_up();
+        assert_eq!(sh.ui.overlay, Overlay::Sending);
+        assert!(sh.in_flight());
+    }
+
+    #[test]
+    fn blocked_update_explains_itself() {
+        let mut sh = Shell::new(false);
+        sh.blocked_update = true;
+        assert!(!sh.hotkey_down());
+        let toast = sh.ui.toast.clone().expect("engel toast'i");
+        assert!(toast.text.contains("guncelleme"));
+    }
+
+    #[test]
+    fn hotkey_unavailable_names_configured_key() {
+        let mut sh = Shell::new(false);
+        sh.hotkey_unavailable("F11");
+        let toast = sh.ui.toast.clone().expect("kisayol toast'i");
+        assert!(toast.text.contains("F11"));
+        assert!(!toast.text.contains("F9"));
     }
 }

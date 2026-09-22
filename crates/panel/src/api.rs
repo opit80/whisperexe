@@ -27,7 +27,7 @@ pub const ROUTES: &[(&str, &str, &str)] = &[
     ("GET", "/v1/fallback/switch", "acil salter durumu"),
     ("POST", "/v1/fallback/switch", "acil salter: fallback harcamasini durdur/baslat"),
     ("GET", "/v1/fallback/vendor", "aktif fallback hatti + hat fiyatlari + anahtar VAR/YOK"),
-    ("POST", "/v1/fallback/vendor", "hat secimi: groq | openai (sonraki isteklere uygulanir)"),
+    ("POST", "/v1/fallback/vendor", "hat secimi: groq | openai | local (sonraki isteklere uygulanir)"),
     ("PUT", "/v1/fallback/tariffs", "hat fiyati: vendor + carpan/sabit (hat secilince uygulanir)"),
     ("PUT", "/v1/fallback/upstream", "hat tabani: vendor + saniye (en az 3sn)"),
     ("POST", "/v1/fallback/keys", "saglayici anahtari gir (bellek-ici, loga yazilmaz)"),

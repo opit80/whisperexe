@@ -320,6 +320,13 @@ fn dispatch_inner(
             })?;
             return st.topup(s[2], amount, now).map(|v| (200, v.to_string()));
         }
+        if s.len() == 4 && s[0] == "v1" && s[1] == "users" && m == "POST" && s[3] == "deduct" {
+            let v = json_body(req)?;
+            let amount = v.get("amount_krs").and_then(|x| x.as_i64()).ok_or_else(|| {
+                ApiError::new(400, "bad_request", "'amount_krs' gerekli")
+            })?;
+            return st.deduct(s[2], amount, now).map(|v| (200, v.to_string()));
+        }
         if s.len() == 4 && s[0] == "v1" && s[1] == "users" && m == "PUT" && s[3] == "limits" {
             let v = json_body(req)?;
             return st.set_limits(s[2], &v, now).map(|v| (200, v.to_string()));

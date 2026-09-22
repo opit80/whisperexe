@@ -20,6 +20,10 @@ pub const FALLBACK_QUANTUM_FLOOR_SECS: u64 = 3;
 pub const DEFAULT_UPSTREAM_MIN_SECS: u64 = 10;
 /// OpenAI hattı tabanı (minimumsuz -> ev tabanı 3sn işler).
 pub const OPENAI_UPSTREAM_MIN_SECS: u64 = 3;
+/// Local hat tabanı (ücretsiz ev modeli; 3sn quantum).
+pub const LOCAL_UPSTREAM_MIN_SECS: u64 = 3;
+/// Local hat fiyatı: sabit 0 kuruş/dk (ücretsiz, anahtarsız).
+pub const LOCAL_FIXED_KRS_PER_MIN: i64 = 0;
 
 /// Fallback sağlayıcı seçimi (panelden dinamik; varsayılan Groq).
 /// Karar: `docs/FALLBACK.md` §1.
@@ -27,6 +31,8 @@ pub const OPENAI_UPSTREAM_MIN_SECS: u64 = 3;
 pub enum FallbackVendor {
     Groq,
     OpenAi,
+    /// Ücretsiz ev/local model (anahtar gerekmez, sabit 0 kuruş/dk).
+    Local,
 }
 
 impl FallbackVendor {
@@ -34,6 +40,7 @@ impl FallbackVendor {
         match self {
             FallbackVendor::Groq => "groq",
             FallbackVendor::OpenAi => "openai",
+            FallbackVendor::Local => "local",
         }
     }
 
@@ -41,16 +48,23 @@ impl FallbackVendor {
         match s.to_lowercase().as_str() {
             "groq" | "groq-turbo" | "whisper-large-v3-turbo" => Some(FallbackVendor::Groq),
             "openai" | "whisper-1" | "gpt-4o-mini-transcribe" => Some(FallbackVendor::OpenAi),
+            "local" | "ev-local" | "ev" => Some(FallbackVendor::Local),
             _ => None,
         }
     }
 
-    /// Hattın upstream tabanı (Groq 10sn, OpenAI minimumsuz -> 3sn).
+    /// Hattın upstream tabanı (Groq 10sn, OpenAI/Local 3sn).
     pub fn default_upstream_min(&self) -> u64 {
         match self {
             FallbackVendor::Groq => DEFAULT_UPSTREAM_MIN_SECS,
             FallbackVendor::OpenAi => OPENAI_UPSTREAM_MIN_SECS,
+            FallbackVendor::Local => LOCAL_UPSTREAM_MIN_SECS,
         }
+    }
+
+    /// Local hat sır gerektirmez (ücretsiz ev modeli).
+    pub fn needs_key(&self) -> bool {
+        !matches!(self, FallbackVendor::Local)
     }
 }
 
@@ -126,6 +140,15 @@ pub struct TariffTable {
     vendor: FallbackVendor,
     groq: VendorCfg,
     openai: VendorCfg,
+    #[serde(default = "default_local_cfg")]
+    local: VendorCfg,
+}
+
+fn default_local_cfg() -> VendorCfg {
+    VendorCfg {
+        price: FallbackPrice::FixedKrsPerMin(LOCAL_FIXED_KRS_PER_MIN),
+        upstream_min_secs: LOCAL_UPSTREAM_MIN_SECS,
+    }
 }
 
 impl TariffTable {
@@ -142,6 +165,7 @@ impl TariffTable {
             vendor: FallbackVendor::Groq,
             groq,
             openai,
+            local: default_local_cfg(),
         }
     }
 
@@ -157,6 +181,7 @@ impl TariffTable {
         match vendor {
             FallbackVendor::Groq => self.groq,
             FallbackVendor::OpenAi => self.openai,
+            FallbackVendor::Local => self.local,
         }
     }
 
@@ -175,9 +200,15 @@ impl TariffTable {
     /// sonraki isteklere uygulanır (devam edenler eski sürümle kesinleşir).
     pub fn set_tariff(&mut self, home_krs_per_min: i64, fallback: FallbackPrice) -> Tariff {
         // Eski davranış korunur: aktif hattın fiyatı değişir (tek sürüm artışı).
+        // Local hat ücretsizdir; aktifken fiyat yazımı Fixed(0) ile sınırlanır.
+        let fb = match self.vendor {
+            FallbackVendor::Local => FallbackPrice::FixedKrsPerMin(LOCAL_FIXED_KRS_PER_MIN),
+            _ => fallback,
+        };
         match self.vendor {
-            FallbackVendor::Groq => self.groq.price = fallback,
-            FallbackVendor::OpenAi => self.openai.price = fallback,
+            FallbackVendor::Groq => self.groq.price = fb,
+            FallbackVendor::OpenAi => self.openai.price = fb,
+            FallbackVendor::Local => {}
         }
         self.current.home_krs_per_min = home_krs_per_min;
         self.apply()
@@ -196,10 +227,14 @@ impl TariffTable {
 
     /// Belirli hattın fiyatını ayarlar (aktif hat ise hemen, değilse
     /// hat seçilince uygulanır). Her değişim sürümü artırır.
+    /// Local hat ücretsizdir: fiyatı her zaman Fixed(0) kalır.
     pub fn set_vendor_price(&mut self, vendor: FallbackVendor, price: FallbackPrice) -> Tariff {
         match vendor {
             FallbackVendor::Groq => self.groq.price = price,
             FallbackVendor::OpenAi => self.openai.price = price,
+            FallbackVendor::Local => {
+                self.local.price = FallbackPrice::FixedKrsPerMin(LOCAL_FIXED_KRS_PER_MIN);
+            }
         }
         self.apply()
     }
@@ -210,6 +245,7 @@ impl TariffTable {
         match vendor {
             FallbackVendor::Groq => self.groq.upstream_min_secs = v,
             FallbackVendor::OpenAi => self.openai.upstream_min_secs = v,
+            FallbackVendor::Local => self.local.upstream_min_secs = v,
         }
         self.apply()
     }
@@ -295,6 +331,30 @@ mod tests {
         assert_eq!(FallbackVendor::parse("groq"), Some(FallbackVendor::Groq));
         assert_eq!(FallbackVendor::parse("whisper-1"), Some(FallbackVendor::OpenAi));
         assert_eq!(FallbackVendor::parse("gpt-4o-mini-transcribe"), Some(FallbackVendor::OpenAi));
+        assert_eq!(FallbackVendor::parse("local"), Some(FallbackVendor::Local));
         assert_eq!(FallbackVendor::parse("bilinmez"), None);
+    }
+
+    #[test]
+    fn local_vendor_free_no_key_no_upstream_floor() {
+        // Local hat: sabit 0 kuruş/dk (ücretsiz), anahtar gerekmez, taban 3sn.
+        assert!(!FallbackVendor::Local.needs_key());
+        assert!(FallbackVendor::Groq.needs_key());
+        let mut t = TariffTable::new(120, FallbackPrice::MultiplierBp(50000));
+        t.set_vendor(FallbackVendor::Local);
+        assert_eq!(t.vendor(), FallbackVendor::Local);
+        // 60sn bile 0 kuruş; taban 3sn.
+        let q = t.current().quote(Line::Fallback, 60);
+        assert_eq!((q.billable_secs, q.cost_krs), (60, 0));
+        let q = t.current().quote(Line::Fallback, 1);
+        assert_eq!((q.billable_secs, q.cost_krs), (3, 0));
+        // Fiyat yazımı local'i 0'da tutar (ücretli yapılamaz).
+        t.set_vendor_price(FallbackVendor::Local, FallbackPrice::FixedKrsPerMin(900));
+        let q = t.current().quote(Line::Fallback, 60);
+        assert_eq!(q.cost_krs, 0);
+        // Groq/OpenAI akışı bozulmadı: geri dönünce eski fiyat durur.
+        t.set_vendor(FallbackVendor::Groq);
+        let q = t.current().quote(Line::Fallback, 60);
+        assert_eq!(q.cost_krs, 600);
     }
 }

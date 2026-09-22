@@ -88,6 +88,7 @@ pub fn user_redeem(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>, c
         }
         persist(&app, &s);
     }
+    crate::tauri_app::set_shell_logged_in(&app, true);
     Ok(json!({"ok": true, "account": username}))
 }
 
@@ -111,6 +112,7 @@ pub fn user_login(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>, ac
         s.set_pair(&account, get("access"), get("refresh"), num("access_expires_at"), num("refresh_expires_at"));
         persist(&app, &s);
     }
+    crate::tauri_app::set_shell_logged_in(&app, true);
     Ok(json!({"ok": true, "account": account}))
 }
 
@@ -143,6 +145,7 @@ pub fn user_refresh(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>) 
         s.set_pair(&account, get("access"), get("refresh"), num("access_expires_at"), num("refresh_expires_at"));
         persist(&app, &s);
     }
+    crate::tauri_app::set_shell_logged_in(&app, true);
     Ok(json!({"ok": true, "account": account}))
 }
 
@@ -165,6 +168,7 @@ pub fn user_me(u: tauri::State<Mutex<UserSession>>) -> Result<Value, String> {
 pub fn user_logout(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>) -> Value {
     u.lock().expect("oturum kilidi").clear();
     let _ = std::fs::remove_file(session_path(&app));
+    crate::tauri_app::set_shell_logged_in(&app, false);
     json!({"ok": true})
 }
 
@@ -172,6 +176,12 @@ pub fn user_logout(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>) -
 #[tauri::command]
 pub fn broker_info() -> Result<Value, String> {
     net::get(base(), "/v1/version")
+}
+
+/// Uygulama sürümü (derleme-zamanı CARGO_PKG_VERSION; girissiz).
+#[tauri::command]
+pub fn app_version() -> Value {
+    json!({"version": env!("CARGO_PKG_VERSION")})
 }
 
 /// Bas-güncelle: GitHub son kurulumu indirip çalıştırır, uygulamayı kapatır.
@@ -302,6 +312,11 @@ pub fn admin_topup(a: tauri::State<Mutex<AdminSession>>, username: String, amoun
 }
 
 #[tauri::command]
+pub fn admin_deduct(a: tauri::State<Mutex<AdminSession>>, username: String, amount_krs: i64) -> Result<Value, String> {
+    apost(&a, &format!("/v1/users/{username}/deduct"), &json!({"amount_krs": amount_krs}))
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn admin_limits(
     a: tauri::State<Mutex<AdminSession>>,
@@ -412,4 +427,62 @@ pub fn admin_key_clear(a: tauri::State<Mutex<AdminSession>>, vendor: String) -> 
         admin_headers(&s)?
     };
     net::delete(base(), "/v1/fallback/keys", &h, &format!("vendor={vendor}"))
+}
+
+// ---- kisayol (bas-konus tusu; varsayilan F9) ----
+
+/// Kayitli tusu doner (acilis `hotkey.json`'dan okunur).
+#[allow(non_snake_case)]
+#[tauri::command]
+pub fn hotkeyGet(app: tauri::AppHandle) -> Value {
+    use tauri::Manager;
+    let key = app
+        .try_state::<crate::tauri_app::AppState>()
+        .map(|s| s.hotkey.lock().expect("kisayol kilidi").clone())
+        .unwrap_or_else(|| crate::hotkey::DEFAULT_HOTKEY.to_string());
+    json!({"hotkey": key})
+}
+
+/// Tusu degistir: once yeni kayit denenir (baska programdaysa eski
+/// korunur), sonra eski silinir + dosyaya yazilir.
+/// Gecersizde `kisayol-gecersiz` (on-yuz `Hata: kisayol-gecersiz` basar).
+#[allow(non_snake_case)]
+#[tauri::command]
+pub fn hotkeySet(app: tauri::AppHandle, key: String) -> Result<Value, String> {
+    use tauri::Manager;
+    let canon =
+        crate::hotkey::canonical(&key).ok_or_else(|| "kisayol-gecersiz".to_string())?;
+    let old = app
+        .try_state::<crate::tauri_app::AppState>()
+        .map(|s| s.hotkey.lock().expect("kisayol kilidi").clone())
+        .unwrap_or_else(|| crate::hotkey::DEFAULT_HOTKEY.to_string());
+    if old == canon {
+        return Ok(json!({"ok": true, "hotkey": canon}));
+    }
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+        let gs = app.global_shortcut();
+        gs.on_shortcut(canon, |app, _shortcut, event| {
+            let _open = {
+                let state = app.state::<crate::tauri_app::AppState>();
+                let mut shell = state.shell.lock().expect("shell kilidi");
+                match event.state {
+                    ShortcutState::Pressed => shell.hotkey_down(),
+                    ShortcutState::Released => {
+                        shell.hotkey_up();
+                        true
+                    }
+                }
+            };
+            crate::tauri_app::emit_overlay(app);
+        })
+        .map_err(|e| format!("kisayol-kayit-hatasi:{e}"))?;
+        let _ = gs.unregister(old.as_str());
+    }
+    crate::hotkey::save_to_file(&crate::tauri_app::hotkey_path(&app), canon)?;
+    if let Some(s) = app.try_state::<crate::tauri_app::AppState>() {
+        *s.hotkey.lock().expect("kisayol kilidi") = canon.to_string();
+    }
+    Ok(json!({"ok": true, "hotkey": canon}))
 }

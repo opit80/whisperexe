@@ -32,6 +32,9 @@
     display: flex; justify-content: center; align-items: flex-start;
     padding-top: 8px;
   }
+  /* Hayalet saydamlik duzeltmesi: gizli durumda govde hicbir piksel
+     cizmez (WebView2 transparent arka plan hayaleti kalmaz). */
+  body[data-state="hidden"] { opacity: 0; pointer-events: none; }
   #pill {
     display: flex; align-items: center; gap: 10px;
     background: var(--pill);
@@ -85,7 +88,7 @@
   }
 </style>
 </head>
-<body>
+<body data-state="hidden">
   <div id="pill" data-state="hidden" role="status" aria-live="polite">
     <span id="dot"></span>
     <span id="secs">0:00</span>
