@@ -2,6 +2,14 @@
 //!
 //! Sırlar YALNIZCA Rust tarafinda tutulur; JS'e asla gonderilmez, loga
 //! yazilmaz. `Debug` bilerek elle yazildi: deger sizdirmaz.
+//!
+//! Kalicilik ("beni hatirla"): refresh ciftinin hesapsiz kismi app-data
+//! dizinindeki `session.json` dosyasinda durur (sifre ASLA yazilmaz).
+//! Acilista dosya yuklenir; access bitmisse `user_refresh` sessizce
+//! yeniler, refresh de bitmisse kullanici yeniden giris yapar.
+
+/// Kalici oturum dosyasi adi (app-data dizininde).
+pub const SESSION_FILE_NAME: &str = "session.json";
 
 /// Su anki unix-saniye (komutlar `now_secs` ile besler; test enjekte eder).
 pub fn now_unix() -> u64 {
@@ -60,8 +68,16 @@ impl UserSession {
         self.access.as_deref()
     }
 
+    pub fn refresh_token(&self) -> Option<&str> {
+        self.refresh.as_deref()
+    }
+
     pub fn access_valid(&self, now: u64) -> bool {
         self.access.is_some() && now < self.access_expires_at
+    }
+
+    pub fn refresh_valid(&self, now: u64) -> bool {
+        self.refresh.is_some() && now < self.refresh_expires_at
     }
 
     pub fn logged_in(&self) -> bool {
@@ -98,6 +114,58 @@ impl UserSession {
         self.access_expires_at = 0;
         self.refresh_expires_at = 0;
         self.balance_kurus = None;
+    }
+
+    /// Dosyaya yazilacak en kucuk kume (sifre ASLA icinde yok).
+    pub fn save_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "account": self.account,
+            "access": self.access,
+            "refresh": self.refresh,
+            "access_expires_at": self.access_expires_at,
+            "refresh_expires_at": self.refresh_expires_at,
+        })
+    }
+
+    /// Kaydedilmis cifti yukler (yoksa/bozuksa false; sir sizdirmaz).
+    pub fn restore_json(&mut self, v: &serde_json::Value) -> bool {
+        let account = v.get("account").and_then(|x| x.as_str()).unwrap_or("");
+        let access = v.get("access").and_then(|x| x.as_str()).unwrap_or("");
+        let refresh = v.get("refresh").and_then(|x| x.as_str()).unwrap_or("");
+        if account.is_empty() || access.is_empty() || refresh.is_empty() {
+            return false;
+        }
+        let n = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        self.account = Some(account.to_string());
+        self.access = Some(access.to_string());
+        self.refresh = Some(refresh.to_string());
+        self.access_expires_at = n("access_expires_at");
+        self.refresh_expires_at = n("refresh_expires_at");
+        true
+    }
+
+    /// Kalici dosyaya yazar (hata metni kisa; cagiran fail-open sayar).
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<(), String> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("dizin-hatasi:{e}"))?;
+        }
+        let text =
+            serde_json::to_string(&self.save_json()).map_err(|_| "kayit-hatasi".to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("yazma-hatasi:{e}"))?;
+        Ok(())
+    }
+
+    /// Kalici dosyadan yukler (yoksa/bozuksa false).
+    pub fn load_from_file(&mut self, path: &std::path::Path) -> bool {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let v: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        self.restore_json(&v)
     }
 }
 
@@ -181,5 +249,45 @@ mod tests {
         s2.set("gizli-tok-xyz".into(), 100);
         let d = format!("{:?}", s2);
         assert!(!d.contains("gizli-tok-xyz"));
+    }
+
+    #[test]
+    fn session_json_roundtrip() {
+        let mut s = UserSession::default();
+        s.set_pair("ali", "A123".into(), "R123".into(), 200, 30_000);
+        let v = s.save_json();
+        // Sifre alani yok, cift var.
+        assert!(v.get("password").is_none());
+        let mut r = UserSession::default();
+        assert!(r.restore_json(&v));
+        assert_eq!(r.account(), Some("ali"));
+        assert_eq!(r.refresh_token(), Some("R123"));
+        assert!(r.access_valid(199));
+        assert!(r.refresh_valid(29_999));
+        assert!(!r.refresh_valid(30_000));
+    }
+
+    #[test]
+    fn session_json_rejects_broken() {
+        let mut s = UserSession::default();
+        assert!(!s.restore_json(&serde_json::json!({})));
+        assert!(!s.restore_json(&serde_json::json!({"account": "ali"})));
+        assert!(!s.logged_in());
+    }
+
+    #[test]
+    fn session_file_roundtrip() {
+        let dir = std::env::temp_dir().join("whisperexe-test-session");
+        let path = dir.join("session.json");
+        let _ = std::fs::remove_file(&path);
+        let mut s = UserSession::default();
+        s.set_pair("ali", "A123".into(), "R123".into(), 200, 300);
+        s.save_to_file(&path).expect("kayit");
+        let mut r = UserSession::default();
+        assert!(r.load_from_file(&path));
+        assert_eq!(r.account(), Some("ali"));
+        let _ = std::fs::remove_file(&path);
+        // Yoksa false (sessiz cikis degil, yeniden giris).
+        assert!(!UserSession::default().load_from_file(&path));
     }
 }

@@ -50,6 +50,7 @@ pub fn run() {
             crate::commands::user_status,
             crate::commands::user_redeem,
             crate::commands::user_login,
+            crate::commands::user_refresh,
             crate::commands::user_me,
             crate::commands::user_logout,
             crate::commands::broker_info,
@@ -80,6 +81,7 @@ pub fn run() {
             crate::commands::admin_key_clear,
         ])
         .setup(|app| {
+            restore_session(app.handle());
             boot_from_broker(app.handle());
             setup_tray(app.handle());
             #[cfg(desktop)]
@@ -234,6 +236,21 @@ fn setup_tray(app: &AppHandle) {
         .build(app)
     {
         eprintln!("tauri: tepsi kurulamadi: {e}");
+    }
+}
+
+/// Kalici oturumu (varsa) bellege yukler. Dosya yoksa/bozuksa sessizce
+/// gecilir (kullanici giris formunu gorur; donma YOK, sir sizmaz).
+fn restore_session(app: &AppHandle) {
+    let path = crate::commands::session_path(app);
+    if let Some(state) = app.try_state::<Mutex<crate::session::UserSession>>() {
+        let ok = state
+            .lock()
+            .map(|mut s| s.load_from_file(&path))
+            .unwrap_or(false);
+        if !ok {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 

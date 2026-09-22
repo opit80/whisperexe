@@ -41,7 +41,7 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let mut next = url.to_string();
     for _ in 0..6 {
-        let res = crate::net::agent()
+        let res = crate::net::download_agent()
             .get(&next)
             .header("Accept", "application/octet-stream")
             .header("User-Agent", "whisperexe")

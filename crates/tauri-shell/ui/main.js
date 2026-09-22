@@ -21,7 +21,16 @@ function fmtErr(e) {
 
 async function refreshStatus() {
   try {
-    const s = await invoke("user_status");
+    let s = await invoke("user_status");
+    // Access bitmis ama refresh duruyorsa sessizce yenile (beni hatirla).
+    if (s.logged_in && !s.access_valid) {
+      try {
+        await invoke("user_refresh");
+        s = await invoke("user_status");
+      } catch (e) {
+        // Refresh de bitmis/hatali: giris formuna dus (donma YOK).
+      }
+    }
     $("broker").textContent = s.broker || "—";
     const dot = $("netdot");
     if (s.logged_in) {

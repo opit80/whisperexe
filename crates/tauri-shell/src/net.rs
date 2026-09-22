@@ -7,24 +7,47 @@
 #[cfg(feature = "tauri")]
 use std::sync::OnceLock;
 #[cfg(feature = "tauri")]
+use std::time::Duration;
+#[cfg(feature = "tauri")]
 use ureq::tls::{RootCerts, TlsConfig};
 #[cfg(feature = "tauri")]
 use ureq::Agent;
 
+/// API istekleri tavanı: 15sn. Ulaşılamayan broker SONSUZA dek asılmaz
+/// (donma YOK); süre aşımı `baglanti-hatasi` olarak döner, ön-yüz kısa
+/// kod gösterir.
+#[cfg(feature = "tauri")]
+const API_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Kurulum indirme tavanı: 120sn (100MB cap; yavaş hatta da iner).
+#[cfg(feature = "tauri")]
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+
+#[cfg(feature = "tauri")]
+fn agent_with(timeout: Duration) -> Agent {
+    Agent::config_builder()
+        .tls_config(
+            TlsConfig::builder()
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .timeout_connect(Some(Duration::from_secs(5)))
+        .timeout_global(Some(timeout))
+        .build()
+        .into()
+}
+
 #[cfg(feature = "tauri")]
 pub(crate) fn agent() -> Agent {
     static A: OnceLock<Agent> = OnceLock::new();
-    A.get_or_init(|| {
-        Agent::config_builder()
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
-            .build()
-            .into()
-    })
-    .clone()
+    A.get_or_init(|| agent_with(API_TIMEOUT)).clone()
+}
+
+/// Büyük dosya indirme için ayrı ajan (API tavanı uygulanmaz).
+#[cfg(feature = "tauri")]
+pub(crate) fn download_agent() -> Agent {
+    static D: OnceLock<Agent> = OnceLock::new();
+    D.get_or_init(|| agent_with(DOWNLOAD_TIMEOUT)).clone()
 }
 
 #[cfg(feature = "tauri")]

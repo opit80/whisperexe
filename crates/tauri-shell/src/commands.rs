@@ -15,6 +15,23 @@ fn base() -> &'static str {
     tauri_app::BROKER_BASE
 }
 
+/// Kalici oturum dosyasi (app-data; yoksa/okunamazsa fail-open).
+pub(crate) fn session_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("whisperexe"))
+        .join(crate::session::SESSION_FILE_NAME)
+}
+
+/// Giris/davet/yenileme sonrasi cift diske yazilir (hata sessiz: giris
+/// yine de gecerli, sadece hatirlanmaz).
+fn persist(app: &tauri::AppHandle, s: &UserSession) {
+    if let Err(e) = s.save_to_file(&session_path(app)) {
+        eprintln!("oturum kaydi yazilamadi: {e}");
+    }
+}
+
 fn auth_headers(sess: &UserSession) -> Result<[(&'static str, String); 2], String> {
     let t = sess.access().ok_or_else(|| "giris-gerekli".to_string())?;
     Ok([
@@ -47,7 +64,7 @@ pub fn user_status(u: tauri::State<Mutex<UserSession>>) -> Value {
 
 /// Davetle ilk giris: kod + kullanici + sifre (en az 12 karakter).
 #[tauri::command]
-pub fn user_redeem(u: tauri::State<Mutex<UserSession>>, code: String, username: String, password: String) -> Result<Value, String> {
+pub fn user_redeem(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>, code: String, username: String, password: String) -> Result<Value, String> {
     if password.len() < client::auth::MIN_PASSWORD_LEN {
         return Err("zayif-sifre-12".to_string());
     }
@@ -69,13 +86,14 @@ pub fn user_redeem(u: tauri::State<Mutex<UserSession>>, code: String, username: 
         if let Some(b) = v.get("balance_kurus").and_then(|x| x.as_i64()) {
             s.set_balance(b);
         }
+        persist(&app, &s);
     }
     Ok(json!({"ok": true, "account": username}))
 }
 
 /// Hesap girisi: hesap + sifre (HWID otomatik).
 #[tauri::command]
-pub fn user_login(u: tauri::State<Mutex<UserSession>>, account: String, password: String) -> Result<Value, String> {
+pub fn user_login(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>, account: String, password: String) -> Result<Value, String> {
     let hwid = {
         let s = u.lock().expect("oturum kilidi");
         s.hwid().to_string()
@@ -91,6 +109,39 @@ pub fn user_login(u: tauri::State<Mutex<UserSession>>, account: String, password
     {
         let mut s = u.lock().expect("oturum kilidi");
         s.set_pair(&account, get("access"), get("refresh"), num("access_expires_at"), num("refresh_expires_at"));
+        persist(&app, &s);
+    }
+    Ok(json!({"ok": true, "account": account}))
+}
+
+/// Kaydedilmis refresh ile sessiz yenileme (acilis + access bitimi).
+/// Basariliysa cift doner ve diske yazilir; refresh de bitmisse hata
+/// doner (on-yuz giris formuna duser, donma YOK).
+#[tauri::command]
+pub fn user_refresh(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>) -> Result<Value, String> {
+    let (account, refresh, hwid) = {
+        let s = u.lock().expect("oturum kilidi");
+        (
+            s.account().unwrap_or("").to_string(),
+            s.refresh_token().ok_or_else(|| "giris-gerekli".to_string())?.to_string(),
+            s.hwid().to_string(),
+        )
+    };
+    if account.is_empty() {
+        return Err("giris-gerekli".to_string());
+    }
+    let v = net::post(
+        base(),
+        "/v1/refresh",
+        &[],
+        &json!({"refresh": refresh, "hwid": hwid}),
+    )?;
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let num = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    {
+        let mut s = u.lock().expect("oturum kilidi");
+        s.set_pair(&account, get("access"), get("refresh"), num("access_expires_at"), num("refresh_expires_at"));
+        persist(&app, &s);
     }
     Ok(json!({"ok": true, "account": account}))
 }
@@ -109,10 +160,11 @@ pub fn user_me(u: tauri::State<Mutex<UserSession>>) -> Result<Value, String> {
     Ok(v)
 }
 
-/// Cikis: cift bellekten silinir.
+/// Cikis: cift bellekten + diskten silinir (hatirla temizlenir).
 #[tauri::command]
-pub fn user_logout(u: tauri::State<Mutex<UserSession>>) -> Value {
+pub fn user_logout(app: tauri::AppHandle, u: tauri::State<Mutex<UserSession>>) -> Value {
     u.lock().expect("oturum kilidi").clear();
+    let _ = std::fs::remove_file(session_path(&app));
     json!({"ok": true})
 }
 
