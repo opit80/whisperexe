@@ -154,19 +154,37 @@ fn boot_from_broker(app: &AppHandle) {
             let _ = tx.send(body);
         });
         let body = rx.recv_timeout(BOOT_TIMEOUT).ok().flatten();
-        {
+        let unknown = {
             let state = handle.state::<AppState>();
             let mut shell = state.shell.lock().expect("shell kilidi");
             match body {
                 Some(json) => match shell.boot(env!("CARGO_PKG_VERSION"), &json) {
-                    Ok(BootApply::VersionUnknown) => shell.boot_unknown_version(),
-                    Ok(_) => BootApply::Allowed,
-                    Err(_) => shell.boot_unknown_version(),
+                    Ok(BootApply::VersionUnknown) => {
+                        shell.boot_unknown_version();
+                        true
+                    }
+                    Ok(_) => false,
+                    Err(_) => {
+                        shell.boot_unknown_version();
+                        true
+                    }
                 },
-                None => shell.boot_unknown_version(),
-            };
-        }
+                None => {
+                    shell.boot_unknown_version();
+                    true
+                }
+            }
+        };
         emit_overlay(&handle);
+        if unknown {
+            // Açılış uyarısı geçicidir: 8sn sonra söner, boş hayalet kalmaz.
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(8));
+                let state = handle.state::<AppState>();
+                state.shell.lock().expect("shell kilidi").dismiss();
+                emit_overlay(&handle);
+            });
+        }
     });
 }
 
