@@ -80,33 +80,47 @@ pub fn run() {
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
             #[cfg(desktop)]
-            app.handle().plugin(
-                tauri_plugin_global_shortcut::Builder::new()
-                    .with_shortcuts(["F9"])?
-                    .with_handler(|app, shortcut, event| {
-                        use tauri_plugin_global_shortcut::{
-                            Code, Modifiers, ShortcutState,
-                        };
-                        if !shortcut.matches(Modifiers::empty(), Code::F9) {
-                            return;
-                        }
-                        let open = {
-                            let state = app.state::<AppState>();
-                            let mut shell =
-                                state.shell.lock().expect("shell kilidi");
-                            match event.state {
-                                ShortcutState::Pressed => shell.hotkey_down(),
-                                ShortcutState::Released => {
-                                    shell.hotkey_up();
-                                    true
-                                }
+            {
+                use tauri_plugin_global_shortcut::{
+                    Code, Modifiers, ShortcutState,
+                };
+                let plugin = tauri_plugin_global_shortcut::Builder::new()
+                    .with_shortcuts(["F9"])
+                    .map(|b| {
+                        b.with_handler(|app, shortcut, event| {
+                            if !shortcut.matches(Modifiers::empty(), Code::F9) {
+                                return;
                             }
-                        };
-                        let _ = open;
-                        emit_overlay(app);
-                    })
-                    .build(),
-            )?;
+                            let open = {
+                                let state = app.state::<AppState>();
+                                let mut shell =
+                                    state.shell.lock().expect("shell kilidi");
+                                match event.state {
+                                    ShortcutState::Pressed => shell.hotkey_down(),
+                                    ShortcutState::Released => {
+                                        shell.hotkey_up();
+                                        true
+                                    }
+                                }
+                            };
+                            let _ = open;
+                            emit_overlay(app);
+                        })
+                        .build()
+                    });
+                match plugin {
+                    Ok(p) => {
+                        if let Err(e) = app.handle().plugin(p) {
+                            eprintln!("tauri: F9 eklentisi kurulamadi: {e}");
+                            f9_warn(app.handle());
+                        }
+                    }
+                    _ => {
+                        eprintln!("tauri: F9 baska programda, global tus yok");
+                        f9_warn(app.handle());
+                    }
+                }
+            }
             spawn_idle_updater(app.handle().clone());
             Ok(())
         })
@@ -137,6 +151,22 @@ pub fn emit_overlay(app: &AppHandle) {
     } else {
         let _ = app.emit("overlay", &view);
     }
+}
+
+/// F9 alınamadı uyarısı (geçici toast; kapanmadan devam edilir).
+fn f9_warn(app: &AppHandle) {
+    {
+        let state = app.state::<AppState>();
+        state.shell.lock().expect("shell kilidi").f9_unavailable();
+    }
+    emit_overlay(app);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(8));
+        let state = handle.state::<AppState>();
+        state.shell.lock().expect("shell kilidi").dismiss();
+        emit_overlay(&handle);
+    });
 }
 
 /// Açılış kapısı: broker bildirimi → `Shell::boot`. Ağ işi ayrı iş parçacığında

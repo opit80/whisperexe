@@ -220,6 +220,14 @@ impl Shell {
         self.ui.on(UiEvent::Dismiss);
     }
 
+    /// F9 başka programda (kapanmadan devam: pencere çalışır, global tuş yok).
+    pub fn f9_unavailable(&mut self) {
+        self.ui.on(UiEvent::Toast {
+            text: "F9 baska programda; once onu kapat.".into(),
+            kind: client_ui::ToastKind::Warn,
+        });
+    }
+
     /// Yeniden başlatmada zorunlu kurulum uygulandı (bayrak temizlenir).
     pub fn restart_applied(&mut self) {
         self.pending_update = false;
