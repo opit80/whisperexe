@@ -47,6 +47,9 @@ const BOOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Boştaki zorunlu-kurulum denetimi aralığı.
 const IDLE_POLL: Duration = Duration::from_secs(5);
 
+/// Otomatik besleme denetimi aralığı: açılış + her 30dk (sessiz, donma yok).
+pub(crate) const AUTO_CHECK_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
 /// Açılış besleme denetimi gecikmesi: pencere önce açılır (≤15sn hedefi
 /// etkilenmez); denetim ayrı iş parçacığında, sessizce yapılır.
 const BOOT_UPDATE_DELAY: Duration = Duration::from_secs(10);
@@ -139,6 +142,8 @@ pub fn run() {
             crate::commands::mic_set,
             crate::commands::server_start,
             crate::commands::server_status,
+            crate::commands::update_status,
+            crate::commands::check_update_now,
         ])
         .setup(|app| {
             restore_session(app.handle());
@@ -209,6 +214,7 @@ pub fn run() {
             }
             spawn_idle_updater(app.handle().clone());
             spawn_boot_updater(app.handle().clone());
+            spawn_auto_updater(app.handle().clone());
             Ok(())
         })
         .on_window_event(|win, ev| {
@@ -564,6 +570,48 @@ fn spawn_boot_updater(app: AppHandle) {
                 }
             }
         }
+    });
+}
+
+/// Tek denetim: beslemeyi sorar, yeniyse bayrağı kurar, sürümü döner.
+/// Sessizdir (toast YOK); kayıt ortasında overlay çalınmaz (`Shell` kuralı).
+pub(crate) fn poll_feed_once(app: &AppHandle) -> Option<String> {
+    let (tx, rx) = mpsc::channel();
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(check_update_blocking(&handle));
+    });
+    let feed_ver = rx.recv_timeout(UPDATE_TIMEOUT).ok().flatten()?;
+    let dir = applied_dir(app);
+    match crate::update::read_applied_version(&dir) {
+        None => {
+            crate::update::write_applied_version(&dir, &feed_ver);
+            None
+        }
+        Some(applied) => {
+            if crate::update::feed_is_newer(&feed_ver, &applied) {
+                let state = app.state::<AppState>();
+                state
+                    .shell
+                    .lock()
+                    .expect("shell kilidi")
+                    .note_update_available();
+                emit_overlay(app);
+                Some(feed_ver)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Otomatik güncelleme: açılış denetiminden sonra her 30dk sessizce
+/// beslemeyi yoklar; yenilik boşta otomatik kurulur (`spawn_idle_updater`).
+/// Ağ/tavan hatasında sessiz geçilir (donma YOK, toast YOK).
+fn spawn_auto_updater(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(AUTO_CHECK_INTERVAL);
+        let _ = poll_feed_once(&app);
     });
 }
 

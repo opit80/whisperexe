@@ -198,6 +198,37 @@ pub fn fetch_update(app: tauri::AppHandle) -> Result<Value, String> {
     Ok(json!({"ok": true, "tag": tag}))
 }
 
+/// Otomatik güncelleme durumu (Durum sekmesi rozeti; sır yok).
+/// `pending` = boşta kurulacak yenilik var; `auto` her zaman açık (30dk).
+#[tauri::command]
+pub fn update_status(app: tauri::AppHandle) -> Value {
+    use tauri::Manager;
+    let pending = app
+        .try_state::<crate::tauri_app::AppState>()
+        .map(|s| s.shell.lock().expect("shell kilidi").update_due_at_restart())
+        .unwrap_or(false);
+    json!({"pending": pending, "auto": true, "interval_mins": 30})
+}
+
+/// Şimdi denetle: beslemeyi sessizce sorar, yenilik varsa bayrağı kurar.
+/// Yoksa/ulaşılamazsa `{"available": false}` (toast YOK, donma YOK).
+#[tauri::command]
+pub fn check_update_now(app: tauri::AppHandle) -> Result<Value, String> {
+    match crate::tauri_app::poll_feed_once(&app) {
+        Some(v) => Ok(json!({"available": true, "version": v})),
+        None => {
+            // İşaret yoksa benimsenmiş ya da güncel/ulaşılamaz: bekleyen
+            // bayrak yine de doğruyu söyler (kurulu yenilik varsa true).
+            use tauri::Manager;
+            let pending = app
+                .try_state::<crate::tauri_app::AppState>()
+                .map(|s| s.shell.lock().expect("shell kilidi").update_due_at_restart())
+                .unwrap_or(false);
+            Ok(json!({"available": pending}))
+        }
+    }
+}
+
 /// Yonetim artik ayri pencere degil, ana pencerede "Yonetim" sekmesidir.
 /// Bu komut pencere ACMAZ; on-yuz sekmeye gecer. Geriye uyumluluk icin
 /// `{"ok": true}` doner (eski cagiranlar bozulmaz).

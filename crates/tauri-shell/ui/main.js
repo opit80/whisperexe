@@ -121,7 +121,8 @@ $("loginform").addEventListener("submit", async (ev) => {
       password: $("li-pw").value,
     });
     $("li-pw").value = "";
-    say("Girdin (" + r.account + ").", "ok");
+    try { localStorage.setItem("wx-acc", r.account || $("li-acc").value.trim()); } catch (e) {}
+    say("Girdin (" + r.account + "). Bu makinede hatırlanır.", "ok");
     await refreshStatus();
   } catch (e) {
     say(fmtErr(e), "err");
@@ -142,7 +143,8 @@ $("redeemform").addEventListener("submit", async (ev) => {
     });
     $("rd-pw").value = "";
     $("rd-code").value = "";
-    say("Hesap açıldı (" + r.account + ").", "ok");
+    try { localStorage.setItem("wx-acc", r.account || $("rd-user").value.trim()); } catch (e) {}
+    say("Hesap açıldı (" + r.account + "). Bu makinede hatırlanır.", "ok");
     await refreshStatus();
   } catch (e) {
     say(fmtErr(e), "err");
@@ -163,11 +165,59 @@ $("updbtn").addEventListener("click", async () => {
     $("updbtn").disabled = false;
   }
 });
+// Otomatik güncelleme: Rust her 30dk sessizce beslemeyi yoklar, yenilik
+// boşta kurulur. Bu rozet durumu gösterir; Şimdi denetle tek sefer sorar.
+async function refreshAuto(quiet) {
+  try {
+    const s = await invoke("update_status");
+    const el = $("updauto");
+    if (el) el.textContent = s.pending ? "yenilik hazır (boşta kurulur)" : "açık (30dk)";
+    if (s.pending && !quiet) say("Yenilik hazır: kaydı bitirince boşta kurulur.", "ok");
+  } catch (e) {
+    if (!quiet) say(fmtErr(e), "err");
+  }
+}
+if ($("updcheckbtn")) $("updcheckbtn").addEventListener("click", async () => {
+  $("updcheckbtn").disabled = true;
+  say("Denetleniyor…");
+  try {
+    const r = await invoke("check_update_now");
+    if (r.available) say("Yenilik bulundu (" + (r.version || "?") + "): boşta kurulur.", "ok");
+    else say("Güncelsin.", "ok");
+    refreshAuto(true);
+  } catch (e) {
+    say(fmtErr(e), "err");
+  } finally {
+    $("updcheckbtn").disabled = false;
+  }
+});
+setInterval(() => refreshAuto(true), 5 * 60 * 1000);
 $("logoutbtn").addEventListener("click", async () => {
   await invoke("user_logout");
   say("");
   refreshStatus();
 });
+// Hatırla: kullanıcı adı her zaman ön-doldurulur (şifre ASLA saklanmaz;
+// oturum Rust'taki jetonla sürer, periyodik sessiz yenilemeyle canlı tutulur).
+function prefillAccount() {
+  try {
+    const a = localStorage.getItem("wx-acc") || "";
+    if (a) {
+      if ($("li-acc") && !$("li-acc").value) $("li-acc").value = a;
+      if ($("rd-user") && !$("rd-user").value) $("rd-user").value = a;
+    }
+  } catch (e) {}
+}
+// Oturum canlı tutucu: 10dk'da bir sessiz yenileme (refresh döner, 30 gün
+// penceresi kayar; uygulama düzenli açıldıkça çıkış istenmez).
+setInterval(async () => {
+  try {
+    const s = await invoke("user_status");
+    if (s.logged_in) {
+      try { await invoke("user_refresh"); } catch (e) {}
+    }
+  } catch (e) {}
+}, 10 * 60 * 1000);
 $("adminbtn").addEventListener("click", async () => {
   try {
     await invoke("open_admin");
@@ -688,6 +738,77 @@ $("hkform").addEventListener("submit", async (ev) => {
   }
 });
 
+// Tuşu Kaydet: sonraki gerçek kombinasyonu yakalar (örn. Ctrl+Shift+K).
+// Yalnızca-modifiye basımı beklenir (tek Ctrl sayılmaz); Esc iptal eder.
+// Yakalanan değer Rust `canonical` biçimiyle aynıdır, hemen kaydedilir.
+let hkCapturing = false;
+function hkComboFromEvent(ev) {
+  const mods = [];
+  if (ev.ctrlKey) mods.push("Ctrl");
+  if (ev.altKey) mods.push("Alt");
+  if (ev.shiftKey) mods.push("Shift");
+  if (ev.metaKey) mods.push("Super");
+  let key = ev.key || "";
+  if (key === " " || key === "Spacebar") key = "Space";
+  else if (key === "Escape" || key === "Esc") return { cancel: true };
+  else if (["Control", "Alt", "Shift", "Meta", "AltGraph", "OS"].includes(key)) return null;
+  else if (key === "Dead") return null;
+  else if (key.length === 1) key = key.toUpperCase();
+  else if (/^F\d{1,2}$/i.test(key)) key = key.toUpperCase();
+  else if (key === "Escape") return { cancel: true };
+  else {
+    // Adlı tuşlar: Rust görünümüyle aynı (ilk harf büyük, gerisi küçük).
+    const low = key.toLowerCase();
+    key = key[0].toUpperCase() + low.slice(1);
+  }
+  if (!key) return null;
+  return { combo: mods.length ? mods.join("+") + "+" + key : key };
+}
+if ($("hkrec")) $("hkrec").addEventListener("click", () => {
+  if (hkCapturing) return;
+  hkCapturing = true;
+  const btn = $("hkrec");
+  const old = btn.textContent;
+  btn.textContent = "Tuşa bas… (Esc iptal)";
+  btn.disabled = true;
+  $("hkmsg").textContent = "Yeni kombinasyona bas (ör. Ctrl+Shift+K).";
+  $("hkmsg").className = "msg";
+  const done = (restore) => {
+    hkCapturing = false;
+    btn.textContent = old;
+    btn.disabled = false;
+    document.removeEventListener("keydown", onKey, true);
+    if (restore) $("hk-input").focus();
+  };
+  const onKey = async (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const r = hkComboFromEvent(ev);
+    if (!r) return; // yalın modifiye: ana tuş bekleniyor
+    if (r.cancel) {
+      done(true);
+      $("hkmsg").textContent = "İptal edildi.";
+      $("hkmsg").className = "msg";
+      return;
+    }
+    done(false);
+    $("hk-input").value = r.combo;
+    $("hksave").disabled = true;
+    try {
+      const out = await invoke("hotkeySet", { key: r.combo });
+      paintHotkey(out.hotkey);
+      $("hkmsg").textContent = "Kaydedildi (" + out.hotkey + ").";
+      $("hkmsg").className = "msg ok";
+    } catch (e) {
+      $("hkmsg").textContent = fmtErr(e);
+      $("hkmsg").className = "msg err";
+    } finally {
+      $("hksave").disabled = false;
+    }
+  };
+  document.addEventListener("keydown", onKey, true);
+});
+
 // ---- ses paneli (F9 yakalama cihazi Rust/cpal adiyla; seviye testi Web) ----
 const SILENCE_RMS = 0.015;
 const WARN_RMS = 0.03;
@@ -872,4 +993,5 @@ if ($("adm-srvstart")) {
 }
 
 refreshAppVersion();
-refreshBroker().then(refreshStatus).then(loadHotkey);
+prefillAccount();
+refreshBroker().then(refreshStatus).then(loadHotkey).then(() => refreshAuto(true));

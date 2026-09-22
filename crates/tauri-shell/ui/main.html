@@ -101,6 +101,7 @@
             <input type="password" id="li-pw" autocomplete="current-password" />
           </div>
           <div><button class="primary" type="submit" id="loginbtn">Giriş yap</button></div>
+          <p class="hint muted" style="margin:8px 0 0">Bu makinede hatırlanır: bir kez gir, kapatıp açınca yeniden sorma (çıkış yapmadıkça).</p>
         </form>
       </div>
       <div id="tab-redeem" role="tabpanel" hidden>
@@ -143,8 +144,12 @@
       <div class="stat"><span class="k">Sürüm</span><span class="v num" id="bver">—</span></div>
       <div class="stat"><span class="k">Taban</span><span class="v num" id="bfloor">—</span></div>
       <div class="stat"><span class="k">Güncelleme</span><span class="v" id="upd">—</span></div>
+      <div class="stat"><span class="k">Otomatik</span><span class="v" id="updauto">açık (30dk)</span></div>
     </div>
-    <div style="margin-top:8px"><button type="button" class="ghost" id="updbtn">Güncelle</button></div>
+    <div class="row" style="margin-top:8px; flex-wrap:wrap">
+      <button type="button" class="ghost" id="updbtn">Güncelle</button>
+      <button type="button" class="ghost" id="updcheckbtn">Şimdi denetle</button>
+    </div>
   </section>
 
   <section class="panel" aria-label="Kısayol">
@@ -154,8 +159,12 @@
         <label class="f" for="hk-input">Bas-konuş tuşu (ör. F9, Q, Ctrl+Shift+K)</label>
         <input type="text" id="hk-input" value="F9" maxlength="24" spellcheck="false" autocomplete="off" />
       </div>
-      <div class="row"><button class="primary" type="submit" id="hksave">Kaydet</button></div>
+      <div class="row" style="flex-wrap:wrap">
+        <button class="primary" type="submit" id="hksave">Kaydet</button>
+        <button type="button" class="ghost" id="hkrec">Tuşu Kaydet</button>
+      </div>
     </form>
+    <p class="hint muted" style="margin:8px 0 0" id="hkhint">Tuşu Kaydet'e bas, sonra yeni kombinasyona bas (Esc iptal).</p>
     <div class="msg" id="hkmsg" role="status" aria-live="polite"></div>
   </section>
 
