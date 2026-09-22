@@ -14,6 +14,7 @@ tauri = [
   "dep:tauri-plugin-global-shortcut",
   "dep:tauri-plugin-updater",
   "dep:ureq",
+  "dep:cpal",
 ]
 
 [dependencies]
@@ -21,6 +22,7 @@ client = { path = "../client" }
 client-ui = { path = "../client-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+cpal = { version = "0.15", optional = true }
 tauri = { version = "2", optional = true , features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
 tauri-plugin-updater = { version = "2", optional = true }

@@ -256,7 +256,7 @@ impl Shell {
     /// Kısayol başka programda (kapanmadan devam: pencere çalışır,
     /// global tuş yok). Metin ayarlanan tuşa göre dinamiktir.
     pub fn hotkey_unavailable(&mut self, key: &str) {
-        let key = crate::hotkey::canonical(key).unwrap_or(crate::hotkey::DEFAULT_HOTKEY);
+        let key = crate::hotkey::canonical(key).unwrap_or_else(|| crate::hotkey::DEFAULT_HOTKEY.to_string());
         self.ui.on(UiEvent::Toast {
             text: format!("{key} baska programda; once onu kapat."),
             kind: client_ui::ToastKind::Warn,
@@ -269,6 +269,21 @@ impl Shell {
         if matches!(self.ui.overlay, Overlay::UpdatePending) {
             self.ui.on(UiEvent::Dismiss);
         }
+    }
+
+    /// Gonderim hatti yanit vermezse (yukleme iscisi yoksa): hat mesgul
+    /// birakilmaz, overlay gizlenir + hata toast'i. Gecici toast 5sn'de
+    /// soner (Tauri `emit_overlay` sonumu).
+    pub fn send_timeout(&mut self) {
+        if !self.in_flight {
+            return;
+        }
+        self.in_flight = false;
+        self.ui.overlay = Overlay::Hidden;
+        self.ui.on(UiEvent::Toast {
+            text: "Hata: gonderilemedi (hat-yok), kaydın çöpe atıldı.".into(),
+            kind: client_ui::ToastKind::Error,
+        });
     }
 
     /// Açılış besleme denetimi yenilik buldu: bayrağı kur, overlay'i bilgilendir.
@@ -490,6 +505,24 @@ mod tests {
         // Gövde tavanı (~2MB) client core'da sabit; tam kayıt altında kalır.
         assert!(client::audio_enc::MAX_BODY_BYTES >= 2 * 1024 * 1024 - 1);
         assert_eq!(client::audio_enc::MAX_SECS, 180);
+    }
+
+    #[test]
+    fn send_timeout_clears_stuck_sending() {
+        // Yukleme iscisi bagli degilse hat asili kalmaz: hata toast'i + gizli.
+        let mut sh = Shell::new(false);
+        sh.set_logged_in(true);
+        assert!(sh.hotkey_down());
+        sh.push_second(&tone_1s());
+        sh.hotkey_up();
+        assert!(sh.in_flight());
+        sh.send_timeout();
+        assert!(!sh.in_flight());
+        assert_eq!(sh.ui.overlay, Overlay::Hidden);
+        let toast = sh.ui.toast.clone().expect("hata toast'i");
+        assert!(toast.text.contains("gonderilemedi"));
+        // Bosta cagri etkisizdir.
+        sh.send_timeout();
     }
 
     #[test]

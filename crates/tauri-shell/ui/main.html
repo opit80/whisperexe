@@ -151,8 +151,8 @@
     <div class="eyebrow" style="margin-bottom:8px">kısayol</div>
     <form class="grid" id="hkform">
       <div>
-        <label class="f" for="hk-input">Bas-konuş tuşu (F1–F12)</label>
-        <input type="text" id="hk-input" value="F9" maxlength="4" spellcheck="false" autocomplete="off" />
+        <label class="f" for="hk-input">Bas-konuş tuşu (ör. F9, Q, Ctrl+Shift+K)</label>
+        <input type="text" id="hk-input" value="F9" maxlength="24" spellcheck="false" autocomplete="off" />
       </div>
       <div class="row"><button class="primary" type="submit" id="hksave">Kaydet</button></div>
     </form>
@@ -208,6 +208,7 @@
       <button type="button" data-pane="fallback">Fallback</button>
       <button type="button" data-pane="audit">Denetim</button>
       <button type="button" data-pane="disks">Diskler</button>
+      <button type="button" data-pane="server">Sunucu</button>
     </nav>
     <div class="grow">
       <div class="msg" id="adm-msg" role="status" aria-live="polite"></div>
@@ -418,6 +419,21 @@
           </div>
           <div id="adm-diskscur" class="muted num" style="font-size:13px">—</div>
           <p class="hint muted" style="font-size:12px; margin:12px 0 0">%80 dolulukta uyarı verir; silme yoktur, KVKK silme panelden hard-delete ile yapılır.</p>
+        </div>
+      </section>
+
+      <section class="pane" id="adm-pane-server">
+        <div class="panel">
+          <div class="pane-head">
+            <h2>Yerel sunucu</h2>
+            <span class="grow"></span>
+            <button type="button" id="adm-srvbtn">Tazele</button>
+          </div>
+          <div id="adm-srvcur" class="muted" style="font-size:13px; margin-bottom:12px">—</div>
+          <div class="row" style="flex-wrap:wrap">
+            <button type="button" class="primary" id="adm-srvstart">Sunucuyu başlat</button>
+          </div>
+          <p class="hint muted" style="font-size:12px; margin:12px 0 0">server.bat aranır: uygulama dizini → kurulum dizini → C:\whisper\bin\server.bat. Bulunamazsa hata yazar.</p>
         </div>
       </section>
     </div>

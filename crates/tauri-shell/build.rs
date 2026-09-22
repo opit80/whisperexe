@@ -122,6 +122,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=TAURI_BROKER_HOST");
     println!("cargo:rerun-if-env-changed=TAURI_UPDATER_PUBKEY");
     println!("cargo:rerun-if-env-changed=TAURI_FEED_URL");
+    // Release etiketi (or. v0.3.1): on-yuz gercek surumu gosterir.
+    // Verilmezse `dev` (gunluk derleme).
+    println!("cargo:rerun-if-env-changed=RELEASE_TAG");
+    let tag = std::env::var("RELEASE_TAG").unwrap_or_else(|_| "dev".to_string());
+    println!("cargo:rustc-env=WHISPER_RELEASE_TAG={tag}");
 
     #[cfg(feature = "tauri")]
     {

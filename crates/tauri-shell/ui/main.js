@@ -84,7 +84,11 @@ async function refreshMe(quiet) {
 async function refreshAppVersion() {
   try {
     const v = await invoke("app_version");
-    if (v && v.version) $("appver").textContent = "v" + v.version;
+    if (v && v.version) {
+      const rel = v.release && v.release !== "dev" ? " · " + v.release : "";
+      $("appver").textContent = "v" + v.version + rel;
+      $("appver").title = "ikili v" + v.version + (rel || " (günlük derleme)");
+    }
   } catch (e) {
     // sessiz: rozet boş kalır, toast yok
   }
@@ -684,8 +688,7 @@ $("hkform").addEventListener("submit", async (ev) => {
   }
 });
 
-// ---- ses paneli (mikrofon sec + seviye testi; F9 akisina dokunmaz) ----
-const MIC_KEY = "whisper_mic_id";
+// ---- ses paneli (F9 yakalama cihazi Rust/cpal adiyla; seviye testi Web) ----
 const SILENCE_RMS = 0.015;
 const WARN_RMS = 0.03;
 
@@ -699,54 +702,91 @@ function micLevel(text) {
   $("miclevel").textContent = text || "";
 }
 
-async function micList() {
-  const sel = $("miclist");
-  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-    sel.textContent = "";
-    micSay("Hata: mikrofon-izin-yok", "err");
-    return;
-  }
+// Liste once Rust yakalama katmanindan (gercek adlar); bos ise Web
+// yedegine dusulur. Izin yoksa etiketler bos gelir: o durumda once
+// izin istenir (getUserMedia), sonra liste tazelenir.
+async function micEnsureWebPermission() {
   try {
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    const inputs = devs.filter((d) => d.kind === "audioinput");
-    sel.textContent = "";
-    if (!inputs.length) {
-      micSay("Hata: mikrofon-izin-yok", "err");
-      return;
-    }
-    const saved = localStorage.getItem(MIC_KEY) || "";
-    let found = false;
-    inputs.forEach((d, i) => {
-      const o = document.createElement("option");
-      o.value = d.deviceId || "";
-      o.textContent = d.label || ("Mikrofon " + (i + 1));
-      if (saved && d.deviceId === saved) {
-        o.selected = true;
-        found = true;
-      }
-      sel.appendChild(o);
-    });
-    if (saved && !found && inputs[0].label) {
-      // Etiketler izinsiz bos gelir; izin sonrasi liste tazelenir.
-    }
-    const anyLabel = inputs.some((d) => d.label);
-    if (!anyLabel) micSay("Hata: mikrofon-izin-yok", "err");
-    else micSay("", "");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
+    return true;
   } catch (e) {
-    micSay("Hata: mikrofon-izin-yok", "err");
+    return false;
   }
 }
 
-if ($("miclist")) {
-  $("miclist").addEventListener("change", (ev) => {
+async function micList() {
+  const sel = $("miclist");
+  sel.textContent = "";
+  let names = [];
+  let def = "";
+  let saved = "";
+  try {
+    const r = await invoke("mic_list");
+    names = r.devices || [];
+    def = r.default || "";
+  } catch (e) {
+    names = [];
+  }
+  try {
+    const g = await invoke("mic_get");
+    saved = g.device || "";
+  } catch (e) {
+    saved = "";
+  }
+  if (!names.length && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
     try {
-      localStorage.setItem(MIC_KEY, ev.target.value || "");
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devs.filter((d) => d.kind === "audioinput");
+      if (inputs.length && !inputs.some((d) => d.label)) {
+        // Etiket yok = izin yok: izni iste, listeyi tazele.
+        await micEnsureWebPermission();
+        const devs2 = await navigator.mediaDevices.enumerateDevices();
+        const inputs2 = devs2.filter((d) => d.kind === "audioinput");
+        names = inputs2.map((d, i) => d.label || ("Mikrofon " + (i + 1)));
+      } else {
+        names = inputs.map((d, i) => d.label || ("Mikrofon " + (i + 1)));
+      }
     } catch (e) {
-      // sessiz: hatirlama zorunlu degil
+      names = [];
+    }
+  }
+  if (!names.length) {
+    micSay("Hata: mikrofon-izin-yok", "err");
+    return;
+  }
+  names.forEach((n) => {
+    const o = document.createElement("option");
+    o.value = n;
+    o.textContent = n;
+    if ((saved && n === saved) || (!saved && def && n === def)) o.selected = true;
+    sel.appendChild(o);
+  });
+  micSay("", "");
+}
+
+if ($("miclist")) {
+  $("miclist").addEventListener("change", async (ev) => {
+    try {
+      const r = await invoke("mic_set", { name: ev.target.value || null });
+      micSay(r.device ? "Mikrofon: " + r.device : "Varsayılan giriş.", "ok");
+    } catch (e) {
+      micSay(fmtErr(e), "err");
     }
   });
 }
-if ($("micrefresh")) $("micrefresh").addEventListener("click", micList);
+if ($("micrefresh")) $("micrefresh").addEventListener("click", async () => {
+  await micEnsureWebPermission();
+  micList();
+});
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  try {
+    navigator.mediaDevices.addEventListener("devicechange", micList);
+  } catch (e) {
+    // sessiz: liste elle tazelenir
+  }
+}
 
 if ($("mictest")) {
   $("mictest").addEventListener("click", async () => {
@@ -759,10 +799,9 @@ if ($("mictest")) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("no-mic");
       }
-      const saved = localStorage.getItem(MIC_KEY) || "";
-      const selId = ($("miclist") && $("miclist").value) || saved || "";
-      const audio = selId ? { deviceId: { exact: selId } } : true;
-      stream = await navigator.mediaDevices.getUserMedia({ audio });
+      // Seviye testi varsayilan girisi dinler (3sn); F9'un kullanacagi
+      // cihaz listedeki secimdir (Rust yakalama katmani).
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       const src = ctx.createMediaStreamSource(stream);
       const an = ctx.createAnalyser();
@@ -804,6 +843,33 @@ if ($("mictest")) {
   });
 }
 if ($("miclist")) micList();
+
+// ---- sunucu (yerel server.bat baslat + kapı durumu) ----
+async function admLoadServer() {
+  try {
+    const v = await invoke("server_status");
+    $("adm-srvcur").textContent = v.running
+      ? "çalışıyor (127.0.0.1:8899)"
+      : "duruyor (server.bat ile başlat)";
+  } catch (e) {
+    admSay(fmtErr(e), "err");
+  }
+}
+if ($("adm-srvbtn")) $("adm-srvbtn").addEventListener("click", admLoadServer);
+if ($("adm-srvstart")) {
+  $("adm-srvstart").addEventListener("click", async () => {
+    $("adm-srvstart").disabled = true;
+    try {
+      const r = await invoke("server_start");
+      admSay("Sunucu başlatıldı (" + r.path + ").", "ok");
+      admLoadServer();
+    } catch (e) {
+      admSay(fmtErr(e), "err");
+    } finally {
+      $("adm-srvstart").disabled = false;
+    }
+  });
+}
 
 refreshAppVersion();
 refreshBroker().then(refreshStatus).then(loadHotkey);

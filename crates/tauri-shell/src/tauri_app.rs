@@ -58,6 +58,7 @@ const UPDATE_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) struct AppState {
     pub(crate) shell: Mutex<Shell>,
     pub(crate) hotkey: Mutex<String>,
+    pub(crate) mic: Mutex<Option<String>>,
 }
 
 pub(crate) fn hotkey_path(app: &AppHandle) -> std::path::PathBuf {
@@ -66,6 +67,15 @@ pub(crate) fn hotkey_path(app: &AppHandle) -> std::path::PathBuf {
         .app_data_dir()
         .unwrap_or_else(|_| std::env::temp_dir().join("whisperexe"))
         .join(crate::hotkey::HOTKEY_FILE_NAME)
+}
+
+/// Secili mikrofon dosyasi (yoksa sistem varsayilani kullanilir).
+pub(crate) fn mic_path(app: &AppHandle) -> std::path::PathBuf {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("whisperexe"))
+        .join(crate::mic_cap::MIC_FILE_NAME)
 }
 
 /// Oturum kapısını kabuğa besler (giriş kaydı engellemez, gönderimi kapatır).
@@ -80,6 +90,7 @@ pub fn run() {
         .manage(AppState {
             shell: Mutex::new(Shell::new(false)),
             hotkey: Mutex::new(crate::hotkey::DEFAULT_HOTKEY.to_string()),
+            mic: Mutex::new(None),
         })
         .manage(Mutex::new(crate::session::UserSession::default()))
         .manage(Mutex::new(crate::session::AdminSession::default()))
@@ -120,13 +131,20 @@ pub fn run() {
             crate::commands::admin_key_clear,
             crate::commands::hotkeyGet,
             crate::commands::hotkeySet,
+            crate::commands::mic_list,
+            crate::commands::mic_get,
+            crate::commands::mic_set,
+            crate::commands::server_start,
+            crate::commands::server_status,
         ])
         .setup(|app| {
             restore_session(app.handle());
             // Açılışta kayıtlı tuş okunur (yoksa/bozuksa F9; fail-open).
             let saved = crate::hotkey::load_from_file(&hotkey_path(app.handle()));
+            let mic = crate::mic_cap::load_from_file(&mic_path(app.handle()));
             if let Some(state) = app.handle().try_state::<AppState>() {
                 *state.hotkey.lock().expect("kisayol kilidi") = saved.clone();
+                *state.mic.lock().expect("mikrofon kilidi") = mic;
                 let logged = app
                     .handle()
                     .try_state::<Mutex<crate::session::UserSession>>()
@@ -148,19 +166,27 @@ pub fn run() {
                         b.with_handler(|app, _shortcut, event| {
                             // Tek kısayol kayıtlıdır; tuş-agnostik karşılanır
                             // (ayarlanan tuş neyse o çalışır).
-                            let _open = {
+                            let sending = {
                                 let state = app.state::<AppState>();
                                 let mut shell =
                                     state.shell.lock().expect("shell kilidi");
                                 match event.state {
-                                    ShortcutState::Pressed => shell.hotkey_down(),
+                                    ShortcutState::Pressed => {
+                                        shell.hotkey_down();
+                                        mic_begin(app);
+                                        false
+                                    }
                                     ShortcutState::Released => {
+                                        mic_feed(app, &mut shell);
                                         shell.hotkey_up();
-                                        true
+                                        shell.in_flight()
                                     }
                                 }
                             };
                             emit_overlay(app);
+                            if sending {
+                                schedule_send_timeout(app.clone());
+                            }
                         })
                         .build()
                     });
@@ -210,6 +236,13 @@ pub fn emit_overlay(app: &AppHandle) {
     if view.state == "done" {
         schedule_done_dismiss(app.clone());
     }
+    // Gecici bilgi (hidden + toast): 5sn sonra kendiliginden soner,
+    // arayuz acik kalmaz (sessiz/giris toast'i hayaleti duzeltmesi).
+    if view.state == "hidden" {
+        if let Some(t) = &view.toast {
+            schedule_transient_dismiss(app.clone(), t.text.clone());
+        }
+    }
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.emit("overlay", &view);
         if visible {
@@ -220,6 +253,30 @@ pub fn emit_overlay(app: &AppHandle) {
     } else {
         let _ = app.emit("overlay", &view);
     }
+}
+
+/// Gecici toast sonumu: ayni metin duruyorsa ve kayit yoksa temizlenir.
+/// Kosullu: arada yeni kayit basladiysa ya da toast degistiyse dokunulmaz.
+fn schedule_transient_dismiss(app: AppHandle, text: String) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(5));
+        let same = {
+            let state = app.state::<AppState>();
+            let shell = state.shell.lock().expect("shell kilidi");
+            !shell.recording()
+                && !shell.in_flight()
+                && shell.ui().toast.as_ref().map(|t| t.text == text).unwrap_or(false)
+        };
+        if same {
+            let state = app.state::<AppState>();
+            state
+                .shell
+                .lock()
+                .expect("shell kilidi")
+                .dismiss();
+            emit_overlay(&app);
+        }
+    });
 }
 
 /// `Done` rozeti kısa süre gösterilir, sonra `Hidden`'a düşer.
@@ -258,6 +315,48 @@ fn hotkey_warn(app: &AppHandle, key: &str) {
         let state = handle.state::<AppState>();
         state.shell.lock().expect("shell kilidi").dismiss();
         emit_overlay(&handle);
+    });
+}
+
+/// Kısayol basıldı: secili/varsayılan mikrofondan yakalamayi baslat.
+/// Donanim yoksa sessizce gecilir (birakma sessiz-toast yoluna duser).
+pub(crate) fn mic_begin(app: &AppHandle) {
+    let device = app
+        .try_state::<AppState>()
+        .and_then(|s| s.mic.lock().expect("mikrofon kilidi").clone());
+    if let Err(e) = crate::mic_cap::capture_start(device.as_deref()) {
+        eprintln!("mikrofon baslatilamadi ({e}), sessiz yol");
+    }
+}
+
+/// Kısayol bırakıldı: biriken sesi 1sn'lik 16kHz dilimler halinde kabuga
+/// besler (o anki `push_second` akisi; bos ise sessiz sayilir).
+pub(crate) fn mic_feed(app: &AppHandle, shell: &mut Shell) {
+    let _ = app;
+    let pcm = crate::mic_cap::capture_stop();
+    for chunk in pcm.chunks(16_000) {
+        if !shell.recording() {
+            break;
+        }
+        shell.push_second(chunk);
+    }
+}
+
+/// Gonderim gozetimi: yukleme iscisi henuz bagli degilse hat `Sending`'de
+/// asili kalmaz; 45sn yanitsizsa hata toast'i + gizlenme.
+pub(crate) fn schedule_send_timeout(app: AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(45));
+        let due = {
+            let state = app.state::<AppState>();
+            let shell = state.shell.lock().expect("shell kilidi");
+            shell.in_flight()
+        };
+        if due {
+            let state = app.state::<AppState>();
+            state.shell.lock().expect("shell kilidi").send_timeout();
+            emit_overlay(&app);
+        }
     });
 }
 

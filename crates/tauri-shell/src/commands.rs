@@ -178,10 +178,11 @@ pub fn broker_info() -> Result<Value, String> {
     net::get(base(), "/v1/version")
 }
 
-/// Uygulama sürümü (derleme-zamanı CARGO_PKG_VERSION; girissiz).
+/// Uygulama sürümü (derleme-zamanı CARGO_PKG_VERSION + release etiketi;
+/// girissiz). Etiket gunluk derlemede `dev` olur.
 #[tauri::command]
 pub fn app_version() -> Value {
-    json!({"version": env!("CARGO_PKG_VERSION")})
+    json!({"version": env!("CARGO_PKG_VERSION"), "release": env!("WHISPER_RELEASE_TAG")})
 }
 
 /// Bas-güncelle: GitHub son kurulumu indirip çalıştırır, uygulamayı kapatır.
@@ -463,26 +464,117 @@ pub fn hotkeySet(app: tauri::AppHandle, key: String) -> Result<Value, String> {
     {
         use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
         let gs = app.global_shortcut();
-        gs.on_shortcut(canon, |app, _shortcut, event| {
-            let _open = {
+        gs.on_shortcut(canon.as_str(), |app, _shortcut, event| {
+            let sending = {
                 let state = app.state::<crate::tauri_app::AppState>();
                 let mut shell = state.shell.lock().expect("shell kilidi");
                 match event.state {
-                    ShortcutState::Pressed => shell.hotkey_down(),
+                    ShortcutState::Pressed => {
+                        shell.hotkey_down();
+                        crate::tauri_app::mic_begin(app);
+                        false
+                    }
                     ShortcutState::Released => {
+                        crate::tauri_app::mic_feed(app, &mut shell);
                         shell.hotkey_up();
-                        true
+                        shell.in_flight()
                     }
                 }
             };
             crate::tauri_app::emit_overlay(app);
+            if sending {
+                crate::tauri_app::schedule_send_timeout(app.clone());
+            }
         })
         .map_err(|e| format!("kisayol-kayit-hatasi:{e}"))?;
         let _ = gs.unregister(old.as_str());
     }
-    crate::hotkey::save_to_file(&crate::tauri_app::hotkey_path(&app), canon)?;
+    crate::hotkey::save_to_file(&crate::tauri_app::hotkey_path(&app), canon.as_str())?;
     if let Some(s) = app.try_state::<crate::tauri_app::AppState>() {
-        *s.hotkey.lock().expect("kisayol kilidi") = canon.to_string();
+        *s.hotkey.lock().expect("kisayol kilidi") = canon.clone();
     }
     Ok(json!({"ok": true, "hotkey": canon}))
+}
+
+// ---- mikrofon (F9 yakalama cihazi; app-data mic.json) ----
+
+/// Yakalama icin giris cihazlari + sistem varsayilani.
+#[tauri::command]
+pub fn mic_list() -> Value {
+    json!({
+        "devices": crate::mic_cap::input_devices(),
+        "default": crate::mic_cap::default_device_name(),
+    })
+}
+
+/// Kayitli cihaz (`null` = varsayilan).
+#[tauri::command]
+pub fn mic_get(app: tauri::AppHandle) -> Value {
+    let saved = crate::mic_cap::load_from_file(&crate::tauri_app::mic_path(&app));
+    json!({"device": saved})
+}
+
+/// Cihaz sec (`null` = varsayilana don). Listede yoksa `mikrofon-bulunamadi`.
+#[tauri::command]
+pub fn mic_set(app: tauri::AppHandle, name: Option<String>) -> Result<Value, String> {
+    use tauri::Manager;
+    let want = name.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(n) = want {
+        if !crate::mic_cap::input_devices().iter().any(|d| d == n) {
+            return Err("mikrofon-bulunamadi".to_string());
+        }
+    }
+    crate::mic_cap::save_to_file(&crate::tauri_app::mic_path(&app), want)?;
+    if let Some(s) = app.try_state::<crate::tauri_app::AppState>() {
+        *s.mic.lock().expect("mikrofon kilidi") = want.map(|x| x.to_string());
+    }
+    Ok(json!({"ok": true, "device": want}))
+}
+
+// ---- yerel sunucu (yonetimden server.bat baslat + durum) ---
+
+/// Aday yollar (ilk bulunan calistirilir).
+fn server_candidates() -> Vec<std::path::PathBuf> {
+    let mut v = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        v.push(cwd.join("server.bat"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            v.push(dir.join("server.bat"));
+        }
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        v.push(std::path::PathBuf::from(local).join("whisperexe").join("server.bat"));
+    }
+    v.push(std::path::PathBuf::from(r"C:\whisper\bin\server.bat"));
+    v
+}
+
+/// `server.bat`'i ayri pencerede baslat (servelemeye baslar).
+/// Dosya yoksa `server-bulunamadi` (on-yuz aday yollari gosterir).
+#[tauri::command]
+pub fn server_start() -> Result<Value, String> {
+    let path = server_candidates()
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| "server-bulunamadi".to_string())?;
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "whisperexe-sunucu", &path.to_string_lossy()])
+        .spawn()
+        .map_err(|e| format!("baslatma-hatasi:{e}"))?;
+    Ok(json!({"ok": true, "path": path.to_string_lossy()}))
+}
+
+/// Yerel broker kapida mi (`127.0.0.1:8899/v1/version`).
+#[tauri::command]
+pub fn server_status() -> Value {
+    let running = crate::net::agent()
+        .get("http://127.0.0.1:8899/v1/version")
+        .call()
+        .ok()
+        .and_then(|res| res.into_body().read_to_string().ok())
+        .map(|b| b.contains("\"ok\":true") || b.contains("\"ok\": true"))
+        .unwrap_or(false);
+    json!({"running": running})
 }
