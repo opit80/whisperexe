@@ -16,16 +16,6 @@
         "width": 560
       },
       {
-        "height": 680,
-        "label": "admin",
-        "minHeight": 560,
-        "minWidth": 860,
-        "title": "whisperexe yönetim",
-        "url": "admin.html",
-        "visible": false,
-        "width": 1000
-      },
-      {
         "alwaysOnTop": true,
         "decorations": false,
         "focus": false,

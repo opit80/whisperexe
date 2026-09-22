@@ -61,7 +61,7 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
         if !(200..300).contains(&status) {
             return Err(format!("http-{status}"));
         }
-        let mut body = res.into_body().into_reader();
+        let body = res.into_body().into_reader();
         let mut buf = Vec::new();
         body
             .take(MAX_BYTES as u64 + 1)

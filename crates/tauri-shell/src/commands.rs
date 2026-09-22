@@ -7,7 +7,6 @@
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
-use tauri::Manager;
 
 use crate::session::{now_unix, AdminSession, UserSession};
 use crate::{net, tauri_app};
@@ -136,37 +135,12 @@ pub fn fetch_update(app: tauri::AppHandle) -> Result<Value, String> {
     Ok(json!({"ok": true, "tag": tag}))
 }
 
-/// Yonetim penceresini acar (yoksa `tauri.conf.json` degerleriyle
-/// ayni kimlikle yeniden olusturur: "admin", admin.html, 1000x680).
+/// Yonetim artik ayri pencere degil, ana pencerede "Yonetim" sekmesidir.
+/// Bu komut pencere ACMAZ; on-yuz sekmeye gecer. Geriye uyumluluk icin
+/// `{"ok": true}` doner (eski cagiranlar bozulmaz).
 #[tauri::command]
-pub fn open_admin(app: tauri::AppHandle) -> Result<Value, String> {
-    let win = match app.get_webview_window("admin") {
-        Some(w) => w,
-        None => recreate_admin(&app)?,
-    };
-    win.show().map_err(|e| format!("pencere-hatasi:{e}"))?;
-    win.set_focus().map_err(|e| format!("pencere-hatasi:{e}"))?;
+pub fn open_admin() -> Result<Value, String> {
     Ok(json!({"ok": true}))
-}
-
-/// Calisan ikilide `admin` penceresi kayitli degilse (orn. ikili, pencere
-/// conf'a eklenmeden once derlenmis): ayni kimlikle yeniden olustur.
-/// Olusturma da olmazsa hata, o anki pencere kimlikleriyle doner (teshis;
-///
-/// sır sizdirmaz, yalniz etiket listesi).
-fn recreate_admin(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
-    tauri::WebviewWindowBuilder::new(app, "admin", tauri::WebviewUrl::App("admin.html".into()))
-        .title("whisperexe yönetim")
-        .inner_size(1000.0, 680.0)
-        .build()
-        .map_err(|e| format!("pencere-olusturma-hatasi:{e}|pencereler:[{}]", window_labels(app)))
-}
-
-/// O an kayitli pencere kimlikleri (virgullu, sirali; teshis icin).
-fn window_labels(app: &tauri::AppHandle) -> String {
-    let mut labels: Vec<String> = app.webview_windows().keys().cloned().collect();
-    labels.sort();
-    labels.join(",")
 }
 
 // ---- yonetim ----
