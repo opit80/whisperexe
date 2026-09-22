@@ -559,8 +559,12 @@ pub fn server_start() -> Result<Value, String> {
         .into_iter()
         .find(|p| p.is_file())
         .ok_or_else(|| "server-bulunamadi".to_string())?;
+    // `start` ilk TIRNAKLI sozcugu baslik sayar; baslik tirnaksizsa komut
+    // sanip "'...' bulunamiyor" verir. O yuzden baslik + yol tirnakli.
+    let title = "\"whisperexe-sunucu\"".to_string();
+    let quoted = format!("\"{}\"", path.to_string_lossy());
     std::process::Command::new("cmd")
-        .args(["/C", "start", "whisperexe-sunucu", &path.to_string_lossy()])
+        .args(["/C", "start", &title, &quoted])
         .spawn()
         .map_err(|e| format!("baslatma-hatasi:{e}"))?;
     Ok(json!({"ok": true, "path": path.to_string_lossy()}))
