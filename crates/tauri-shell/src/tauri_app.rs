@@ -18,6 +18,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+};
 
 use crate::flow::{BootApply, Shell};
 use crate::{overlay, version};
@@ -77,6 +81,7 @@ pub fn run() {
         ])
         .setup(|app| {
             boot_from_broker(app.handle());
+            setup_tray(app.handle());
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -125,6 +130,15 @@ pub fn run() {
             spawn_idle_updater(app.handle().clone());
             Ok(())
         })
+        .on_window_event(|win, ev| {
+            // Kapatma = tepsiye in (uygulama + F9 çalışmaya devam eder).
+            if win.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+                    api.prevent_close();
+                    let _ = win.hide();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("tauri kabugu baslatilamadi");
 }
@@ -168,6 +182,57 @@ fn f9_warn(app: &AppHandle) {
         state.shell.lock().expect("shell kilidi").dismiss();
         emit_overlay(&handle);
     });
+}
+
+/// Sistem tepsisi: Göster / Çık. Simge gömülüdür (derleme-dışı dosyaya bakmaz).
+fn setup_tray(app: &AppHandle) {
+    let icon = match tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("tauri: tepsi simgesi okunamadi: {e}");
+            return;
+        }
+    };
+    let show = match MenuItem::with_id(app, "goster", "Göster", true, None::<&str>) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("tauri: tepsi menusu kurulamadi: {e}");
+            return;
+        }
+    };
+    let quit = match MenuItem::with_id(app, "cik", "Çık", true, None::<&str>) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("tauri: tepsi menusu kurulamadi: {e}");
+            return;
+        }
+    };
+    let menu = match Menu::with_items(app, &[&show, &quit]) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("tauri: tepsi menusu kurulamadi: {e}");
+            return;
+        }
+    };
+    if let Err(e) = TrayIconBuilder::new()
+        .icon(icon)
+        .menu(&menu)
+        .tooltip("whisperexe")
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "goster" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            "cik" => app.exit(0),
+            _ => {}
+        })
+        .build(app)
+    {
+        eprintln!("tauri: tepsi kurulamadi: {e}");
+    }
 }
 
 /// Açılış kapısı: broker bildirimi → `Shell::boot`. Ağ işi ayrı iş parçacığında

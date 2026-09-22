@@ -21,7 +21,7 @@ client = { path = "../client" }
 client-ui = { path = "../client-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", optional = true , features = [] }
+tauri = { version = "2", optional = true , features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = { version = "2", optional = true }
 tauri-plugin-updater = { version = "2", optional = true }
 # Eszamanli HTTP (std-disi async YOK): broker API istemcisi.
