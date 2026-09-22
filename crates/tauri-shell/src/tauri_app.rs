@@ -49,6 +49,7 @@ pub fn run() {
             crate::commands::user_me,
             crate::commands::user_logout,
             crate::commands::broker_info,
+            crate::commands::fetch_update,
             crate::commands::open_admin,
             crate::commands::admin_status,
             crate::commands::admin_login,

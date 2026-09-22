@@ -123,6 +123,19 @@ pub fn broker_info() -> Result<Value, String> {
     net::get(base(), "/v1/version")
 }
 
+/// Bas-güncelle: GitHub son kurulumu indirip çalıştırır, uygulamayı kapatır.
+/// İmza doğrulaması YOK (sahip kararı); kaynak `update::RELEASES_LATEST` sabiti.
+#[tauri::command]
+pub fn fetch_update(app: tauri::AppHandle) -> Result<Value, String> {
+    let (tag, path) = crate::update::fetch_and_stage()?;
+    std::process::Command::new(&path)
+        .spawn()
+        .map_err(|e| format!("baslatma-hatasi:{e}"))?;
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    app.exit(0);
+    Ok(json!({"ok": true, "tag": tag}))
+}
+
 /// Yonetim penceresini acar.
 #[tauri::command]
 pub fn open_admin(app: tauri::AppHandle) -> Result<Value, String> {

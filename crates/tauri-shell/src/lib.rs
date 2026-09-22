@@ -40,6 +40,7 @@ pub mod commands;
 #[cfg(feature = "tauri")]
 pub mod net;
 pub mod overlay;
+pub mod update;
 pub mod session;
 #[cfg(feature = "tauri")]
 pub mod tauri_app;

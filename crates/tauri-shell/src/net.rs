@@ -12,7 +12,7 @@ use ureq::tls::{RootCerts, TlsConfig};
 use ureq::Agent;
 
 #[cfg(feature = "tauri")]
-fn agent() -> Agent {
+pub(crate) fn agent() -> Agent {
     static A: OnceLock<Agent> = OnceLock::new();
     A.get_or_init(|| {
         Agent::config_builder()

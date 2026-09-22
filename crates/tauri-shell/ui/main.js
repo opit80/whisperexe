@@ -130,6 +130,17 @@ $("redeemform").addEventListener("submit", async (ev) => {
 });
 
 $("mebtn").addEventListener("click", () => refreshMe(false));
+$("updbtn").addEventListener("click", async () => {
+  $("updbtn").disabled = true;
+  say("İndiriliyor…");
+  try {
+    const r = await invoke("fetch_update");
+    say("Kurulum başladı (" + (r.tag || "?") + ").", "ok");
+  } catch (e) {
+    say(fmtErr(e), "err");
+    $("updbtn").disabled = false;
+  }
+});
 $("logoutbtn").addEventListener("click", async () => {
   await invoke("user_logout");
   say("");
